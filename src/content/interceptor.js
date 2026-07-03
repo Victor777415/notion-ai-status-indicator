@@ -6,14 +6,9 @@
 	// 确认真正的 AI 流式端点后，再收敛下面的 AI_URL_HINTS（见 docs/M1-detection.md）。
 	const TAG = "[NAI-Indicator]";
 
-	// ⚠️ M1 待确认：候选特征串，均为小写以便匹配。请按实际端点收敛。
+	// M1 确认：Notion AI 对话流式端点。
 	const AI_URL_HINTS = [
-		"runinference",
-		"getcompletion",
-		"inferencetranscript",
-		"assistant",
-		"/ai/",
-		"ai-agent",
+		"/api/v3/runinferencetranscript",
 	];
 
 	function isAiUrl(url) {
