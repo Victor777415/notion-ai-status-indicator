@@ -1,13 +1,17 @@
 import { STATES, MSG } from "../shared/protocol.js";
 
-// tabId -> 最近一次上报的状态
+// tabId -> 最近一次上报的状态与元数据
 const tabStates = new Map();
 const tabUrls = new Map();
+const tabTitles = new Map();
+const tabWindows = new Map();
+const lastUpdateAt = new Map();
 const recentDoneAt = new Map();
 const tabBadgeTimers = new Map();
 const notificationTabs = new Map();
 const lastNotificationAt = new Map();
 
+const STORE_KEY = "nai_conversations";
 const BADGE_CLEAR_MS = 5000;
 const RECENT_DONE_MS = 5000;
 const DONE_NOTIFY_INTERVAL_MS = 3000;
@@ -20,6 +24,28 @@ const BADGE = {
 
 let globalBadgeTimer = null;
 let creating = null;
+
+// SW 可能休眠后重启，导致内存里的对话表清空。启动时先从 session 存储回填，避免弹出面板/角标丢历史。
+(async function hydrate() {
+    try {
+        const data = await chrome.storage.session.get(STORE_KEY);
+        const list = data && data[STORE_KEY];
+        if (!list) return;
+        for (const key of Object.keys(list)) {
+            const c = list[key];
+            const tabId = Number(c && c.tabId);
+            if (!Number.isFinite(tabId)) continue;
+            if (c.state) tabStates.set(tabId, c.state);
+            if (c.url) tabUrls.set(tabId, c.url);
+            if (c.title) tabTitles.set(tabId, c.title);
+            if (c.windowId != null) tabWindows.set(tabId, c.windowId);
+            if (c.updatedAt) lastUpdateAt.set(tabId, c.updatedAt);
+            if (c.state === STATES.DONE && c.updatedAt) recentDoneAt.set(tabId, c.updatedAt);
+        }
+    } catch (e) {
+        /* 无历史或 session 不可用，忽略 */
+    }
+})();
 
 // chrome.action.* 在标签已关闭时会抛 "No tab with id"，统一吞掉，避免未处理的 promise 报错污染错误列表。
 function safeAction(run) {
@@ -42,7 +68,10 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     const at = normalizeTime(msg.at);
     const prev = tabStates.get(tabId);
     tabStates.set(tabId, msg.state);
+    lastUpdateAt.set(tabId, at);
     if (msg.url) tabUrls.set(tabId, msg.url);
+    if (sender.tab && sender.tab.title) tabTitles.set(tabId, sender.tab.title);
+    if (sender.tab && sender.tab.windowId != null) tabWindows.set(tabId, sender.tab.windowId);
 
     updateTabBadge(tabId, msg.state, at);
 
@@ -55,6 +84,7 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     }
 
     updateGlobalBadge();
+    syncStore();
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -103,6 +133,26 @@ function normalizeTime(at) {
 
 function isRunningState(state) {
     return state === STATES.THINKING || state === STATES.RESPONDING;
+}
+
+// 把当前所有对话镜像到 session 存储，供弹出面板读取（面板不必唤醒 SW 即可拿到最新列表）。
+function syncStore() {
+    const list = {};
+    for (const [tabId, state] of tabStates) {
+        list[tabId] = {
+            tabId,
+            state,
+            url: tabUrls.get(tabId) || "",
+            title: tabTitles.get(tabId) || "",
+            windowId: tabWindows.has(tabId) ? tabWindows.get(tabId) : null,
+            updatedAt: lastUpdateAt.get(tabId) || Date.now(),
+        };
+    }
+    try {
+        chrome.storage.session.set({ [STORE_KEY]: list });
+    } catch (e) {
+        /* session 不可用，忽略 */
+    }
 }
 
 function updateTabBadge(tabId, state, at) {
@@ -186,6 +236,9 @@ function shouldNotifyDone(tabId, at) {
 function clearTabState(tabId, options = {}) {
     tabStates.delete(tabId);
     tabUrls.delete(tabId);
+    tabTitles.delete(tabId);
+    tabWindows.delete(tabId);
+    lastUpdateAt.delete(tabId);
     recentDoneAt.delete(tabId);
     clearTabBadgeTimer(tabId);
     if (options.clearNotificationThrottle) {
@@ -193,6 +246,7 @@ function clearTabState(tabId, options = {}) {
     }
     safeAction(() => chrome.action.setBadgeText({ tabId, text: "" }));
     updateGlobalBadge();
+    syncStore();
 }
 
 function clearTabBadgeTimer(tabId) {

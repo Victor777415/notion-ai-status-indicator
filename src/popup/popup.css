@@ -1,0 +1,100 @@
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 320px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #ffffff;
+    color: #1f2328;
+}
+
+.nai-pop-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 12px 14px 8px;
+    border-bottom: 1px solid #eceef1;
+}
+
+.nai-pop-title { font-size: 14px; font-weight: 600; }
+.nai-pop-count { font-size: 12px; color: #6a737d; }
+
+.nai-pop-list {
+    list-style: none;
+    margin: 0;
+    padding: 6px;
+    max-height: 380px;
+    overflow-y: auto;
+}
+
+.nai-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    outline: none;
+}
+
+.nai-item:hover, .nai-item:focus { background: #f5f6f8; }
+
+.nai-ind {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 1;
+}
+
+.nai-ind.idle { background: #c9ced4; }
+.nai-ind.done { background: #16a34a; color: #ffffff; }
+.nai-ind.run {
+    background: transparent;
+    border: 2px solid #cdd8f5;
+    border-top-color: #2f6fed;
+}
+.nai-ind.nai-spin { animation: nai-rot 0.8s linear infinite; }
+@keyframes nai-rot { to { transform: rotate(360deg); } }
+
+.nai-main { flex: 1 1 auto; min-width: 0; }
+.nai-title {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.nai-sub { font-size: 11px; color: #6a737d; margin-top: 2px; }
+
+.nai-go { flex: 0 0 auto; color: #b3bac1; font-size: 13px; }
+.nai-item:hover .nai-go { color: #2f6fed; }
+
+.nai-pop-empty {
+    padding: 26px 16px;
+    text-align: center;
+    color: #6a737d;
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.nai-pop-foot {
+    padding: 8px 14px;
+    border-top: 1px solid #eceef1;
+    color: #9aa2ab;
+    font-size: 11px;
+    text-align: center;
+}
+
+@media (prefers-color-scheme: dark) {
+    html, body { background: #1f1f1f; color: #e6e6e6; }
+    .nai-pop-header, .nai-pop-foot { border-color: #333333; }
+    .nai-item:hover, .nai-item:focus { background: #2a2a2a; }
+    .nai-pop-count, .nai-sub, .nai-pop-foot, .nai-pop-empty { color: #9aa2ab; }
+    .nai-ind.run { border-color: #35507f; border-top-color: #6f9bff; }
+}
