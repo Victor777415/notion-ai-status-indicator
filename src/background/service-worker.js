@@ -22,6 +22,70 @@ const BADGE = {
     DONE_COLOR: "#16a34a",
 };
 
+// ================= 桌面伴侣 WebSocket（Codex 式常驻置顶）=================
+const DESKTOP_WS_URL = "ws://127.0.0.1:8787";
+const DESKTOP_RECONNECT_MS = 5000;
+let desktopSocket = null;
+let desktopReconnectTimer = null;
+
+function connectDesktop() {
+    if (desktopSocket && desktopSocket.readyState === WebSocket.OPEN) return;
+    try {
+        desktopSocket = new WebSocket(DESKTOP_WS_URL);
+    } catch (e) {
+        scheduleDesktopReconnect();
+        return;
+    }
+    desktopSocket.onopen = () => {
+        console.log("[NAI-BG] 桌面伴侣已连接");
+        pushDesktopSnapshot();
+    };
+    desktopSocket.onmessage = (ev) => {
+        try {
+            const msg = JSON.parse(ev.data);
+            if (msg && msg.type === "focus" && msg.tabId) {
+                handleDesktopCommand(msg);
+            }
+        } catch (e) {}
+    };
+    desktopSocket.onclose = () => {
+        desktopSocket = null;
+        scheduleDesktopReconnect();
+    };
+    desktopSocket.onerror = () => {
+        if (desktopSocket) desktopSocket.close();
+        desktopSocket = null;
+        scheduleDesktopReconnect();
+    };
+}
+
+function scheduleDesktopReconnect() {
+    if (desktopReconnectTimer) return;
+    desktopReconnectTimer = setTimeout(() => {
+        desktopReconnectTimer = null;
+        connectDesktop();
+    }, DESKTOP_RECONNECT_MS);
+}
+
+function pushDesktopSnapshot() {
+    if (!desktopSocket || desktopSocket.readyState !== WebSocket.OPEN) return;
+    try {
+        const snapshot = buildSnapshot();
+        desktopSocket.send(JSON.stringify({ type: "snapshot", conversations: snapshot }));
+    } catch (e) {}
+}
+
+function handleDesktopCommand(msg) {
+    const tabId = Number(msg.tabId);
+    if (!Number.isFinite(tabId)) return;
+    chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError || !tab) return;
+        if (tab.windowId != null) chrome.windows.update(tab.windowId, { focused: true });
+        chrome.tabs.update(tabId, { active: true });
+    });
+}
+// ============================================================================
+
 // content ↔ background 的悬浮窗（画中画）消息。字符串须与 content.js 保持一致。
 const MSG_GET_SNAPSHOT = "GET_SNAPSHOT"; // content -> bg：拉取当前所有对话
 const MSG_SNAPSHOT = "NAI_SNAPSHOT";     // bg -> content：推送最新对话列表
@@ -105,6 +169,7 @@ function handleStateMessage(msg, sender) {
 
     updateGlobalBadge();
     syncStore();
+    pushDesktopSnapshot(); // 状态变化时推给桌面伴侣
 }
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -112,8 +177,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    // 只在真正的整页导航/刷新(status:loading)时清空。Notion 是单页应用，发消息时常用
-    // pushState 改 URL(只有 changeInfo.url、没有 status)，那种情况不能清，否则角标会被瞬间抹掉。
     if (changeInfo.status === "loading") {
         clearTabState(tabId);
     }
@@ -268,6 +331,7 @@ function clearTabState(tabId, options = {}) {
     safeAction(() => chrome.action.setBadgeText({ tabId, text: "" }));
     updateGlobalBadge();
     syncStore();
+    pushDesktopSnapshot();
 }
 
 function clearTabBadgeTimer(tabId) {
@@ -286,7 +350,6 @@ function clearGlobalBadgeTimer() {
 function notifyDone(tabId, url) {
     const notificationId = `nai-done-${tabId}-${Date.now()}`;
     console.log("[NAI-BG] 触发完成通知", notificationId);
-    // 若通知没弹，多半是系统层面未授权：请到 系统设置 > 通知 > Google Chrome 打开"允许通知"。
     chrome.notifications.create(
         notificationId,
         {
@@ -329,7 +392,6 @@ async function playSound() {
 }
 
 // ---- 悬浮窗（画中画）数据通道 ----
-// 组装当前所有对话快照（数组），供悬浮窗渲染。
 function buildSnapshot() {
     const list = [];
     for (const [tabId, state] of tabStates) {
@@ -345,7 +407,6 @@ function buildSnapshot() {
     return list;
 }
 
-// 把最新对话列表推给所有已知 Notion 标签里的悬浮窗（没打开悬浮窗的标签收到也会忽略）。
 function broadcastSnapshot() {
     const conversations = buildSnapshot();
     for (const tabId of tabStates.keys()) {
@@ -353,7 +414,6 @@ function broadcastSnapshot() {
     }
 }
 
-// 悬浮窗点击某条对话 → 聚焦对应窗口并激活该标签。
 function focusTab(tabId, windowId) {
     const id = Number(tabId);
     if (!Number.isFinite(id)) return;
@@ -363,3 +423,6 @@ function focusTab(tabId, windowId) {
         chrome.tabs.update(id, { active: true });
     });
 }
+
+// 启动时尝试连接桌面伴侣
+connectDesktop();
