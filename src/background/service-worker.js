@@ -22,6 +22,14 @@ const BADGE = {
     DONE_COLOR: "#16a34a",
 };
 
+// ---- 桌面伴侣（Electron）本地通道 ----
+// 桌面程序在本机跑一个 WebSocket 服务端，扩展作为客户端连上去，把所有对话状态推给它；
+// 桌面端点击某条对话时回传 focus 指令，扩展据此聚焦对应窗口/标签。仅本机 127.0.0.1，数据不出本地。
+const DESKTOP_WS_URL = "ws://127.0.0.1:8787";
+const DESKTOP_RECONNECT_MS = 5000;
+let desktopSocket = null;
+let desktopReconnectTimer = null;
+
 let globalBadgeTimer = null;
 let creating = null;
 
@@ -46,6 +54,9 @@ let creating = null;
         /* 无历史或 session 不可用，忽略 */
     }
 })();
+
+// 尝试连接桌面伴侣（未开则静默重试，不影响扩展其他功能）。
+connectDesktop();
 
 // chrome.action.* 在标签已关闭时会抛 "No tab with id"，统一吞掉，避免未处理的 promise 报错污染错误列表。
 function safeAction(run) {
@@ -135,7 +146,7 @@ function isRunningState(state) {
     return state === STATES.THINKING || state === STATES.RESPONDING;
 }
 
-// 把当前所有对话镜像到 session 存储，供弹出面板读取（面板不必唤醒 SW 即可拿到最新列表）。
+// 把当前所有对话镜像到 session 存储，供弹出面板读取（面板不必唤醒 SW 即可拿到最新列表）；同时推送给桌面伴侣。
 function syncStore() {
     const list = {};
     for (const [tabId, state] of tabStates) {
@@ -153,6 +164,7 @@ function syncStore() {
     } catch (e) {
         /* session 不可用，忽略 */
     }
+    pushDesktopSnapshot();
 }
 
 function updateTabBadge(tabId, state, at) {
@@ -305,4 +317,83 @@ async function playSound() {
     } catch (e) {
         /* 提示音为可选增强，失败忽略 */
     }
+}
+
+// ---- 桌面伴侣通道实现 ----
+function connectDesktop() {
+    if (desktopSocket &&
+        (desktopSocket.readyState === WebSocket.OPEN || desktopSocket.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+    let sock;
+    try {
+        sock = new WebSocket(DESKTOP_WS_URL);
+    } catch (e) {
+        scheduleDesktopReconnect();
+        return;
+    }
+    desktopSocket = sock;
+    sock.addEventListener("open", () => {
+        console.log("[NAI-BG] 已连接桌面伴侣");
+        pushDesktopSnapshot();
+    });
+    sock.addEventListener("message", (ev) => {
+        handleDesktopCommand(ev.data);
+    });
+    sock.addEventListener("close", () => {
+        if (desktopSocket === sock) desktopSocket = null;
+        scheduleDesktopReconnect();
+    });
+    sock.addEventListener("error", () => {
+        try { sock.close(); } catch (e) {}
+    });
+}
+
+function scheduleDesktopReconnect() {
+    if (desktopReconnectTimer) return;
+    desktopReconnectTimer = setTimeout(() => {
+        desktopReconnectTimer = null;
+        connectDesktop();
+    }, DESKTOP_RECONNECT_MS);
+}
+
+function buildSnapshot() {
+    const list = [];
+    for (const [tabId, state] of tabStates) {
+        list.push({
+            tabId,
+            state,
+            url: tabUrls.get(tabId) || "",
+            title: tabTitles.get(tabId) || "",
+            windowId: tabWindows.has(tabId) ? tabWindows.get(tabId) : null,
+            updatedAt: lastUpdateAt.get(tabId) || Date.now(),
+        });
+    }
+    return list;
+}
+
+function pushDesktopSnapshot() {
+    if (!desktopSocket || desktopSocket.readyState !== WebSocket.OPEN) return;
+    try {
+        desktopSocket.send(JSON.stringify({ type: "snapshot", conversations: buildSnapshot(), at: Date.now() }));
+    } catch (e) {
+        /* 发送失败，下次状态变化时重试 */
+    }
+}
+
+function handleDesktopCommand(raw) {
+    let msg;
+    try {
+        msg = JSON.parse(typeof raw === "string" ? raw : "");
+    } catch (e) {
+        return;
+    }
+    if (!msg || msg.type !== "focus") return;
+    const tabId = Number(msg.tabId);
+    if (!Number.isFinite(tabId)) return;
+    chrome.tabs.get(tabId, (tab) => {
+        if (chrome.runtime.lastError || !tab) return;
+        if (tab.windowId != null) chrome.windows.update(tab.windowId, { focused: true });
+        chrome.tabs.update(tabId, { active: true });
+    });
 }
