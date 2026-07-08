@@ -1,6 +1,6 @@
 "use strict";
 
-const { app, BrowserWindow, ipcMain, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, screen, Menu } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { WebSocketServer } = require("ws");
@@ -14,6 +14,7 @@ let wss = null;
 const clients = new Set();
 let lastSnapshot = [];
 let lastBounds = null; // {x,y,width,height}
+let dragState = null; // { startCursor, startBounds }
 
 function clamp(n, min, max) {
 	return Math.min(max, Math.max(min, n));
@@ -43,7 +44,7 @@ function savePositionFromWindow() {
 }
 
 function clampToVisibleWorkArea(x, y, width, height) {
-	// 只要求至少露出一部分，避免完全跑出屏幕
+	// 至少保留一部分窗口在主显示器工作区内，避免完全跑出屏幕。
 	const wa = getPrimaryWorkArea();
 	const minX = wa.x - width + 40;
 	const maxX = wa.x + wa.width - 40;
@@ -101,8 +102,6 @@ function createWindow() {
 		mainWindow.webContents.send("nai:snapshot", lastSnapshot);
 		mainWindow.webContents.send("nai:connection", { connected: clients.size > 0 });
 	});
-
-	mainWindow.on("move", () => savePositionFromWindow());
 
 	mainWindow.on("closed", () => {
 		mainWindow = null;
@@ -173,7 +172,7 @@ ipcMain.on("pet:resize", (_ev, payload) => {
 	const b = mainWindow.getBounds();
 	const anchor = lastBounds || b;
 
-	// 右下角锚定：右下角不动，向上向左扩展
+	// 右下角锚定：右下角不动，向上向左扩展。
 	const right = anchor.x + anchor.width;
 	const bottom = anchor.y + anchor.height;
 	let x = right - w;
@@ -188,12 +187,52 @@ ipcMain.on("pet:resize", (_ev, payload) => {
 	savePositionFromWindow();
 });
 
+ipcMain.on("pet:drag-start", () => {
+	if (!mainWindow) return;
+	dragState = {
+		startCursor: screen.getCursorScreenPoint(),
+		startBounds: mainWindow.getBounds(),
+	};
+});
+
+ipcMain.on("pet:drag-move", () => {
+	if (!mainWindow || !dragState) return;
+	const cursor = screen.getCursorScreenPoint();
+	const dx = cursor.x - dragState.startCursor.x;
+	const dy = cursor.y - dragState.startCursor.y;
+	const next = clampToVisibleWorkArea(
+		dragState.startBounds.x + dx,
+		dragState.startBounds.y + dy,
+		dragState.startBounds.width,
+		dragState.startBounds.height,
+	);
+	mainWindow.setBounds({
+		x: next.x,
+		y: next.y,
+		width: dragState.startBounds.width,
+		height: dragState.startBounds.height,
+	}, false);
+	lastBounds = mainWindow.getBounds();
+});
+
+ipcMain.on("pet:drag-end", () => {
+	dragState = null;
+	savePositionFromWindow();
+});
+
+ipcMain.on("pet:show-menu", () => {
+	const menu = Menu.buildFromTemplate([
+		{ label: "退出", click: () => app.quit() },
+	]);
+	menu.popup({ window: mainWindow || undefined });
+});
+
 ipcMain.on("pet:quit", () => {
 	app.quit();
 });
 
 app.whenReady().then(() => {
-	createWindow();	
+	createWindow();
 	startWsServer();
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) createWindow();

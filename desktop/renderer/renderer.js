@@ -4,6 +4,7 @@ const petEl = document.getElementById("pet");
 const cardsEl = document.getElementById("cards");
 const collapseEl = document.getElementById("collapse");
 const badgeEl = document.getElementById("badge");
+const petIconEl = petEl.querySelector(".pet-icon");
 
 const DONE_RESET_MS = 6000;
 const DRAG_THRESHOLD_PX = 4;
@@ -12,8 +13,36 @@ const RANK = { thinking: 0, responding: 0, done: 1, idle: 2 };
 
 let snapshot = [];
 let collapsed = false;
+let drag = null; // {x,y,moved,startedWindowDrag}
 
-let drag = null; // {x,y,moved}
+function renderPetSvg() {
+	petIconEl.innerHTML = `
+		<svg viewBox="0 0 56 56" width="56" height="56" role="img" aria-label="Notion AI Pet" xmlns="http://www.w3.org/2000/svg">
+			<defs>
+				<radialGradient id="pet-hi" cx="30%" cy="20%" r="70%">
+					<stop offset="0" stop-color="#8fc0ff"/>
+					<stop offset="0.58" stop-color="#6aa8ff" stop-opacity="0"/>
+				</radialGradient>
+				<linearGradient id="pet-bg" x1="0" y1="0" x2="0" y2="1">
+					<stop offset="0" stop-color="#5ea2ff"/>
+					<stop offset="0.55" stop-color="#2f6fed"/>
+					<stop offset="1" stop-color="#1e4fd8"/>
+				</linearGradient>
+				<filter id="pet-shadow" x="-20%" y="-20%" width="140%" height="140%">
+					<feDropShadow dx="0" dy="1" stdDeviation="0.5" flood-color="#000" flood-opacity="0.18"/>
+				</filter>
+			</defs>
+			<circle cx="28" cy="28" r="28" fill="url(#pet-bg)"/>
+			<circle cx="28" cy="28" r="28" fill="url(#pet-hi)"/>
+			<g fill="#fff" filter="url(#pet-shadow)">
+				<circle cx="22" cy="19" r="4"/>
+				<circle cx="34" cy="18" r="4"/>
+				<circle cx="19" cy="30" r="4"/>
+				<circle cx="37" cy="30" r="4"/>
+				<ellipse cx="28" cy="34" rx="7" ry="7.5"/>
+			</g>
+		</svg>`;
+}
 
 function isRunning(state) {
 	return state === "thinking" || state === "responding";
@@ -53,14 +82,15 @@ function sorted(list) {
 }
 
 function computeSize(cardCount, showArrow, showBadge) {
-	const pet = { w: 56, h: 56 };
-	const arrowH = showArrow ? 20 + 8 : 0; // button + gap
-	const badgeH = showBadge ? 18 + 8 : 0;
-	const cardH = cardCount > 0 ? cardCount * 54 + (cardCount - 1) * 8 : 0;
-	const cardsW = cardCount > 0 ? 280 : 56;
-	const w = Math.max(pet.w, cardsW);
-	const h = pet.h + Math.max(arrowH + cardH, badgeH);
-	return { width: w, height: h };
+	const petH = 56;
+	const petW = 56;
+	const gap = 8;
+	const arrowH = showArrow ? 20 + gap : 0;
+	const badgeH = showBadge ? 20 + gap : 0;
+	const cardH = cardCount > 0 ? cardCount * 54 + (cardCount - 1) * gap + gap : 0;
+	const w = cardCount > 0 ? 280 : petW;
+	const h = petH + arrowH + badgeH + cardH;
+	return { width: Math.max(petW, w), height: Math.max(petH, h) };
 }
 
 function updateWindowSize() {
@@ -68,22 +98,18 @@ function updateWindowSize() {
 	const showArrow = !collapsed && list.length > 0;
 	const showBadge = collapsed && list.length > 0;
 	const cardCount = collapsed ? 0 : list.length;
-	const size = computeSize(cardCount, showArrow, showBadge);
-	window.naiBridge.resize(size);
+	window.naiBridge.resize(computeSize(cardCount, showArrow, showBadge));
 }
 
 function render() {
 	const list = sorted(visibleCards(snapshot));
-
 	const hasCards = list.length > 0;
 
-	// 折叠：仅显示 badge（进行中数量）
 	if (!hasCards) collapsed = false;
 
 	cardsEl.hidden = collapsed || !hasCards;
 	collapseEl.hidden = collapsed || !hasCards;
 	badgeEl.hidden = !collapsed || !hasCards;
-
 	cardsEl.textContent = "";
 
 	if (!hasCards) {
@@ -117,7 +143,6 @@ function render() {
 
 		main.appendChild(title);
 		main.appendChild(sub);
-
 		card.appendChild(ind);
 		card.appendChild(main);
 
@@ -131,30 +156,48 @@ function render() {
 	updateWindowSize();
 }
 
-// 点击宠物：无进行中对话时跳 latest；有对话时保持行为（也跳 latest，符合 spec）
 function onPetClick() {
 	window.naiBridge.openNotion({ tabId: "latest" });
 }
 
 petEl.addEventListener("pointerdown", (e) => {
-	drag = { x: e.clientX, y: e.clientY, moved: false };
+	if (e.button !== 0) return;
+	drag = { x: e.clientX, y: e.clientY, moved: false, startedWindowDrag: false };
+	try { petEl.setPointerCapture(e.pointerId); } catch (_) {}
 });
 
 petEl.addEventListener("pointermove", (e) => {
 	if (!drag) return;
 	const dx = e.clientX - drag.x;
 	const dy = e.clientY - drag.y;
-	if (Math.abs(dx) + Math.abs(dy) >= DRAG_THRESHOLD_PX) drag.moved = true;
+	if (Math.abs(dx) + Math.abs(dy) >= DRAG_THRESHOLD_PX) {
+		drag.moved = true;
+		petEl.classList.add("is-dragging");
+		if (!drag.startedWindowDrag) {
+			drag.startedWindowDrag = true;
+			window.naiBridge.dragStart();
+		}
+		window.naiBridge.dragMove();
+	}
 });
 
-petEl.addEventListener("pointerup", () => {
+petEl.addEventListener("pointerup", (e) => {
 	if (!drag) return;
 	const wasClick = !drag.moved;
+	if (drag.startedWindowDrag) window.naiBridge.dragEnd();
 	drag = null;
+	petEl.classList.remove("is-dragging");
+	try { petEl.releasePointerCapture(e.pointerId); } catch (_) {}
 	if (wasClick) onPetClick();
 });
 
-// 右键菜单：仅退出
+petEl.addEventListener("pointercancel", (e) => {
+	if (drag && drag.startedWindowDrag) window.naiBridge.dragEnd();
+	drag = null;
+	petEl.classList.remove("is-dragging");
+	try { petEl.releasePointerCapture(e.pointerId); } catch (_) {}
+});
+
 petEl.addEventListener("contextmenu", (e) => {
 	e.preventDefault();
 	window.naiBridge.showMenu();
@@ -175,5 +218,8 @@ window.naiBridge.onSnapshot((data) => {
 	render();
 });
 
-// 定时刷新 done 回落
+renderPetSvg();
+render();
+
+// 每 500ms 刷新 done 的 6 秒回落。
 setInterval(render, 500);

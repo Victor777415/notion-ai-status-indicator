@@ -3,30 +3,39 @@
 html, body {
 	margin: 0;
 	padding: 0;
+	width: 100%;
+	height: 100%;
 	background: transparent;
 	overflow: hidden;
 	user-select: none;
+	font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 #app {
-	position: relative;
-	width: fit-content;
-	height: fit-content;
-	padding: 0;
+	width: 100vw;
+	height: 100vh;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	justify-content: flex-end;
+	gap: 8px;
+	background: transparent;
 }
 
-/* 可拖动区域：宠物图标 */
 .pet {
 	width: 56px;
 	height: 56px;
+	flex: 0 0 auto;
 	border-radius: 999px;
 	border: none;
 	padding: 0;
 	background: transparent;
 	cursor: pointer;
 	outline: none;
-	-webkit-app-region: drag;
+	-webkit-app-region: no-drag;
 }
+
+.pet.is-dragging { cursor: grabbing; }
 
 .pet:focus-visible {
 	box-shadow: 0 0 0 2px rgba(111, 155, 255, 0.55);
@@ -36,47 +45,26 @@ html, body {
 	width: 56px;
 	height: 56px;
 	border-radius: 999px;
-	background: radial-gradient(75% 75% at 30% 20%, #7fb2ff 0%, rgba(127,178,255,0) 55%),
-		linear-gradient(180deg, #5ea2ff 0%, #2f6fed 52%, #1e4fd8 100%);
 	box-shadow:
 		0 14px 34px rgba(0, 0, 0, 0.28),
 		inset 0 1px 0 rgba(255, 255, 255, 0.35);
-	position: relative;
-	overflow: hidden;
+	display: block;
 }
 
-/* 白色爪印：纯 CSS（无二进制） */
-.pet-icon::before {
-	content: "";
-	position: absolute;
-	inset: 0;
-	background:
-		radial-gradient(circle at 22px 19px, #fff 0 4px, transparent 4.5px),
-		radial-gradient(circle at 34px 18px, #fff 0 4px, transparent 4.5px),
-		radial-gradient(circle at 19px 30px, #fff 0 4px, transparent 4.5px),
-		radial-gradient(circle at 37px 30px, #fff 0 4px, transparent 4.5px),
-		radial-gradient(ellipse at 28px 34px, #fff 0 7px, transparent 7.5px);
-	opacity: 0.95;
-	filter: drop-shadow(0 1px 0 rgba(0,0,0,0.12));
-}
-
-/* 禁止拖动的区域 */
-.no-drag {
+.no-drag,
+.card,
+.collapse,
+.badge {
 	-webkit-app-region: no-drag;
 }
 
 .cards {
-	position: absolute;
-	left: 50%;
-	transform: translateX(-50%);
-	bottom: 60px;
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
 	align-items: stretch;
-	min-width: 220px;
-	max-width: 280px;
-	-webkit-app-region: no-drag;
+	width: 280px;
+	flex: 0 0 auto;
 }
 
 .card {
@@ -85,6 +73,7 @@ html, body {
 	gap: 10px;
 	align-items: center;
 	padding: 10px 12px;
+	min-height: 54px;
 	border-radius: 12px;
 	border: 1px solid rgba(15, 23, 42, 0.14);
 	background: rgba(255, 255, 255, 0.86);
@@ -144,26 +133,19 @@ html, body {
 @keyframes rot { to { transform: rotate(360deg); } }
 
 .collapse {
-	position: absolute;
-	left: 50%;
-	transform: translateX(-50%);
-	bottom: 60px;
 	height: 20px;
 	min-width: 28px;
+	align-self: center;
 	border-radius: 999px;
 	border: 1px solid rgba(15, 23, 42, 0.12);
 	background: rgba(255, 255, 255, 0.88);
 	backdrop-filter: blur(14px) saturate(1.2);
 	cursor: pointer;
 	padding: 0 8px;
-	-webkit-app-region: no-drag;
 }
 
 .badge {
-	position: absolute;
-	left: 50%;
-	transform: translateX(-50%);
-	bottom: 62px;
+	align-self: center;
 	border-radius: 999px;
 	border: 1px solid rgba(15, 23, 42, 0.12);
 	background: rgba(255, 255, 255, 0.88);
@@ -173,7 +155,6 @@ html, body {
 	font-size: 12px;
 	font-weight: 700;
 	color: #0f172a;
-	-webkit-app-region: no-drag;
 }
 
 @media (prefers-color-scheme: dark) {

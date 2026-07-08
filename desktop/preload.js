@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld("naiBridge", {
 	onServerError: (cb) => ipcRenderer.on("nai:server-error", (_e, data) => cb(data)),
 	openNotion: (payload) => ipcRenderer.send("pet:open-notion", payload),
 	resize: (payload) => ipcRenderer.send("pet:resize", payload),
+	dragStart: () => ipcRenderer.send("pet:drag-start"),
+	dragMove: () => ipcRenderer.send("pet:drag-move"),
+	dragEnd: () => ipcRenderer.send("pet:drag-end"),
 	quit: () => ipcRenderer.send("pet:quit"),
 	showMenu: () => ipcRenderer.send("pet:show-menu"),
 });
