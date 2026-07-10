@@ -1,16 +1,18 @@
 "use strict";
 
-const { app, BrowserWindow, ipcMain, screen, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, screen, Menu, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { WebSocketServer } = require("ws");
 
 const WS_PORT = 8787;
+const HEARTBEAT_MS = 20000;
 const POSITION_FILE = path.join(app.getPath("userData"), "pet-position.json");
 const DEFAULT_MARGIN = 24;
 
 let mainWindow = null;
 let wss = null;
+let heartbeatTimer = null;
 const clients = new Set();
 let lastSnapshot = [];
 let lastBounds = null; // {x,y,width,height}
@@ -110,6 +112,7 @@ function createWindow() {
 
 function startWsServer() {
 	wss = new WebSocketServer({ host: "127.0.0.1", port: WS_PORT });
+	startHeartbeat();
 
 	wss.on("connection", (socket) => {
 		clients.add(socket);
@@ -125,6 +128,8 @@ function startWsServer() {
 			if (msg && msg.type === "snapshot") {
 				lastSnapshot = Array.isArray(msg.conversations) ? msg.conversations : [];
 				if (mainWindow) mainWindow.webContents.send("nai:snapshot", lastSnapshot);
+			} else if (msg && msg.type === "pong") {
+				socket.lastPongAt = Date.now();
 			}
 		});
 
@@ -144,26 +149,42 @@ function startWsServer() {
 	});
 }
 
+function startHeartbeat() {
+	if (heartbeatTimer) return;
+	heartbeatTimer = setInterval(() => {
+		sendToExtension({ type: "ping" });
+	}, HEARTBEAT_MS);
+}
+
 function sendConnectionStatus() {
 	if (mainWindow) mainWindow.webContents.send("nai:connection", { connected: clients.size > 0 });
 }
 
 function sendToExtension(payload) {
 	const data = JSON.stringify(payload);
+	let sent = false;
 	for (const c of clients) {
 		try {
 			c.send(data);
+			sent = true;
 		} catch (e) {}
 	}
+	return sent;
+}
+
+function openNotionFallback() {
+	console.log("[NAI-PET] focus fallback openExternal");
+	shell.openExternal("https://app.notion.com/chat");
 }
 
 ipcMain.on("pet:open-notion", (_ev, payload) => {
 	const tabId = payload && payload.tabId ? payload.tabId : "latest";
 	if (tabId === "latest") console.log("[NAI-PET] focus latest sent");
-	sendToExtension({
+	const sent = sendToExtension({
 		type: "focus",
 		tabId,
 	});
+	if (!sent) openNotionFallback();
 });
 
 ipcMain.on("pet:resize", (_ev, payload) => {

@@ -56,7 +56,9 @@ function connectDesktop() {
 	desktopSocket.onmessage = (ev) => {
 		try {
 			const msg = JSON.parse(ev.data);
-			if (msg && msg.type === "focus" && msg.tabId) {
+			if (msg && msg.type === "ping") {
+				sendDesktopPong();
+			} else if (msg && msg.type === "focus" && msg.tabId) {
 				handleDesktopCommand(msg);
 			}
 		} catch (e) {}
@@ -85,6 +87,13 @@ function pushDesktopSnapshot() {
 	try {
 		const snapshot = buildSnapshot();
 		desktopSocket.send(JSON.stringify({ type: "snapshot", conversations: snapshot }));
+	} catch (e) {}
+}
+
+function sendDesktopPong() {
+	if (!desktopSocket || desktopSocket.readyState !== WebSocket.OPEN) return;
+	try {
+		desktopSocket.send(JSON.stringify({ type: "pong" }));
 	} catch (e) {}
 }
 
