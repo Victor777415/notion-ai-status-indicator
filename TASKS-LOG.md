@@ -193,3 +193,21 @@
 	- `cd desktop && npm start` launched Electron; with no extension WS client connected it logged `[NAI-PET] pet hidden disconnected` and was stopped with SIGINT after startup.
 - Remaining:
 	- Manual runtime acceptance still required on real Notion: reload the extension, start a fresh normal or Research task, and confirm a card appears immediately and spins before T-009/T-010 acceptance continues.
+
+## Focus navigation fix
+- Date: 2026-07-13 (Asia/Shanghai)
+- Commit:
+	- this commit — card focus navigates by actual tab URL
+- Actual root cause:
+	- Confirmed: `focusConversation(conversationId)` used `currentConversationIdForTab(tabId, tab)` to decide whether navigation was needed. When the actual tab URL had no `?t=` (for example Marketplace or a normal Notion page), that helper fell back to stale `tabCurrentConversationIds` memory and falsely treated the tab as already showing the target conversation.
+- Changes:
+	- src/background/service-worker.js: `focusConversation` now decides navigation for real conversation IDs only from the actual `chrome.tabs.get(...).url` `?t=` value. If the real URL has no `?t=` or has a different `?t=`, it navigates to `https://app.notion.com/chat?t=<conversationId>`; only an exact actual URL match activates without navigation. Fallback `tab:<id>` records still only focus the tab. Added `[NAI-BG] focus conversation ...` logging with target conversation, tabId, actual URL, actual `?t=`, and navigation decision.
+- Self test:
+	- A: Simulated `tab.url = https://app.notion.com/marketplace` with stale cached current conversation equal to the target; card focus still issued `chrome.tabs.update(..., { active: true, url: "https://app.notion.com/chat?t=target" })`.
+	- B: Simulated a normal Notion page with no `?t=`; card focus navigated to the target conversation URL.
+	- C: Simulated `/chat?t=other`; card focus navigated to the target conversation URL.
+	- D: Simulated `/chat?t=target`; card focus only activated the tab without redundant navigation.
+	- E: Simulated done card focus still removed the completed record; running card focus kept the record.
+	- F: T-009 stream lifecycle and T-011 first-card pipeline regression simulations passed.
+- Remaining:
+	- Manual runtime acceptance recommended: from a completed card whose last tab is currently on Marketplace or another Notion page, click the card and confirm Chrome navigates back to the exact AI conversation.

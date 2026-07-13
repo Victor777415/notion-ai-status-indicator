@@ -762,11 +762,25 @@ function focusConversation(conversationId, options = {}) {
 	chrome.tabs.get(tabId, (tab) => {
 		if (chrome.runtime.lastError || !tab) return;
 		if (tab.windowId != null) chrome.windows.update(tab.windowId, { focused: true });
-		const current = currentConversationIdForTab(tabId, tab);
+		const actualConversationId = conversationIdFromUrl(tab.url || "");
 		const details = { active: true };
-		if (!isFallbackConversationId(conversationId) && current !== conversationId) {
+		const shouldNavigate = !isFallbackConversationId(conversationId) && actualConversationId !== conversationId;
+		if (shouldNavigate) {
 			details.url = conversationUrl(conversationId);
 		}
+		console.log(
+			"[NAI-BG] focus conversation",
+			"conversation",
+			conversationId,
+			"tab",
+			tabId,
+			"url",
+			tab.url || "",
+			"actual",
+			actualConversationId || "",
+			"navigate",
+			shouldNavigate,
+		);
 		chrome.tabs.update(tabId, details);
 		if (options.dismissDone) {
 			markConversationRead(conversationId);
