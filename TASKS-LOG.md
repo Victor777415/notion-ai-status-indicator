@@ -151,3 +151,25 @@
 	- Regression simulations for T-007 and T-008 passed: read-on-view dismissal and Notion usage show/hide behavior remained intact.
 - Remaining:
 	- Manual runtime acceptance still recommended with a real Notion AI Research task: the card should keep spinning throughout tool/search/load phases, then turn ✓ and notify only after the final streamed response closes and the 5s quiet grace elapses.
+
+## T-010
+- Date: 2026-07-13 (Asia/Shanghai)
+- Commit:
+	- this commit — conversation-id keyed tracking and live title sync
+- Actual root cause:
+	- Confirmed: records were keyed by `tabId`, while Notion is an SPA where one tab can switch between multiple transcripts via `?t=`. Titles were captured from `document.title` at request time, so new server-generated titles and manual title edits were not reflected later.
+- Changes:
+	- src/content/interceptor.js: Extracts `transcriptId` from `runInferenceTranscript` request bodies, falls back to the page URL `?t=` value, and logs tab-id compatibility fallback when neither exists. Stream lifecycle events and lastInput metadata now include `conversationId` without changing response consumption.
+	- src/content/content.js: Tracks stream state per conversation, forwards `conversationId` in `NAI_STATE`, and reports `NAI_LOCATION` on title/URL changes via title MutationObserver, history hooks, popstate, visibility/pageshow, and a lightweight poll. This keeps delayed Notion titles and manual renames synced.
+	- src/background/service-worker.js: Stores conversations keyed by `conversationId`, keeps `lastTabId`/tab-current-conversation mappings for focus and read-on-view, preserves old snapshot fields while adding `conversationId`, updates titles from location reports, and focuses cards by navigating the last tab to `https://app.notion.com/chat?t=<conversationId>` when needed. Tab close still removes records for that tab; SPA navigation no longer deletes running records.
+	- desktop/renderer/renderer.js: Uses `conversationId` as the card identity when present and sends a conversation-prefixed focus target while preserving tabId fallback for old snapshots.
+- Self test:
+	- `node --check src/content/interceptor.js` passed.
+	- `node --check src/content/content.js` passed.
+	- `node --check src/background/service-worker.js` passed.
+	- `node --check desktop/renderer/renderer.js` passed.
+	- Simulated T-010 service worker/interceptor behavior verified: one tab can track two `?t=` conversations independently; title sync updates the correct snapshot record; card focus navigates from the wrong `?t=` to the target conversation; navigation does not delete a running record; viewing a completed conversation dismisses only that conversation; done notifications still fire.
+	- Regression simulations for T-007, T-008, and T-009 passed.
+	- `cd desktop && npm start` launched Electron; with no extension WS client connected it logged `[NAI-PET] pet hidden disconnected` and was stopped with SIGINT after startup.
+- Remaining:
+	- Manual runtime acceptance still recommended in real Notion: switch between two conversations in one tab, start a new conversation before its title is generated, manually rename an open conversation, click cards after switching away, and confirm read-on-view removes only the visible completed conversation.

@@ -20,6 +20,71 @@
 		}
 	}
 
+	function safeJsonParse(text) {
+		try {
+			return JSON.parse(text);
+		} catch (e) {
+			return null;
+		}
+	}
+
+	function findTranscriptId(value, depth) {
+		if (!value || depth > 6) return "";
+		if (typeof value !== "object") return "";
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				const found = findTranscriptId(item, depth + 1);
+				if (found) return found;
+			}
+			return "";
+		}
+		const direct = value.transcriptId || value.transcript_id || value.transcriptID;
+		if (direct) return String(direct);
+		if (value.transcript && typeof value.transcript === "object") {
+			const nested = value.transcript.id || value.transcript.transcriptId;
+			if (nested) return String(nested);
+		}
+		for (const key of Object.keys(value)) {
+			const found = findTranscriptId(value[key], depth + 1);
+			if (found) return found;
+		}
+		return "";
+	}
+
+	function extractTranscriptIdFromBody(body) {
+		try {
+			if (!body) return "";
+			if (typeof body === "string") return findTranscriptId(safeJsonParse(body), 0);
+			if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+				return body.get("transcriptId") || body.get("transcript_id") || "";
+			}
+			if (typeof FormData !== "undefined" && body instanceof FormData) {
+				return String(body.get("transcriptId") || body.get("transcript_id") || "");
+			}
+			if (typeof body === "object") return findTranscriptId(body, 0);
+			return "";
+		} catch (e) {
+			return "";
+		}
+	}
+
+	function conversationIdFromUrl() {
+		try {
+			return new URL(window.location && window.location.href ? window.location.href : "").searchParams.get("t") || "";
+		} catch (e) {
+			return "";
+		}
+	}
+
+	function getConversationId(input, init) {
+		const fromBody = extractTranscriptIdFromBody(init && init.body);
+		if (fromBody) return fromBody;
+		const fromUrl = conversationIdFromUrl();
+		if (fromUrl) return fromUrl;
+		console.debug(TAG, "conversation fallback tabId compatibility", { at: Date.now() });
+		return "";
+	}
+
 	function emit(state, extra) {
 		const detail = Object.assign(
 			{ __naiIndicator: true, source: "interceptor", state, at: Date.now() },
@@ -36,7 +101,7 @@
 		console.debug(TAG, `stream ${event}`, { reqId, url, at: Date.now() });
 	}
 
-	async function consumeStream(body, reqId, url) {
+	async function consumeStream(body, reqId, url, conversationId) {
 		let first = true;
 		try {
 			const reader = body.getReader();
@@ -45,14 +110,14 @@
 				if (done) break;
 				if (first && value && value.byteLength) {
 					first = false;
-					emit("responding", { reqId, url });
+					emit("responding", { reqId, url, conversationId, pageConversationId: conversationIdFromUrl() });
 				}
 			}
 		} catch (e) {
 			// 读流异常也视为结束
 		} finally {
 			logStream("close", reqId, url);
-			emit("done", { reqId, url, streamEvent: "close", doneReason: "stream-closed" });
+			emit("done", { reqId, url, conversationId, pageConversationId: conversationIdFromUrl(), streamEvent: "close", doneReason: "stream-closed" });
 		}
 	}
 
@@ -63,9 +128,10 @@
 				input && typeof input === "object" && "url" in input ? input.url : input;
 			const aiHit = isAiUrl(url);
 			const reqId = aiHit ? Math.random().toString(36).slice(2) : null;
+			const conversationId = aiHit ? getConversationId(input, init) : "";
 			if (aiHit) {
 				logStream("open", reqId, String(url));
-				emit("thinking", { url: String(url), reqId, streamEvent: "open" });
+				emit("thinking", { url: String(url), reqId, conversationId, pageConversationId: conversationIdFromUrl(), streamEvent: "open" });
 			}
 
 			const p = origFetch.apply(this, arguments);
@@ -76,20 +142,20 @@
 					try {
 						if (resp && resp.body) {
 							// 用 clone() 读流，不影响页面对原始响应的消费
-							consumeStream(resp.clone().body, reqId, String(url));
+							consumeStream(resp.clone().body, reqId, String(url), conversationId);
 						} else {
 							logStream("close", reqId, String(url));
-							emit("done", { url: String(url), reqId, streamEvent: "close", doneReason: "stream-closed" });
+							emit("done", { url: String(url), reqId, conversationId, pageConversationId: conversationIdFromUrl(), streamEvent: "close", doneReason: "stream-closed" });
 						}
 					} catch (e) {
 						logStream("close", reqId, String(url));
-						emit("done", { url: String(url), reqId, streamEvent: "close", doneReason: "stream-closed" });
+						emit("done", { url: String(url), reqId, conversationId, pageConversationId: conversationIdFromUrl(), streamEvent: "close", doneReason: "stream-closed" });
 					}
 					return resp;
 				})
 				.catch((err) => {
 					logStream("close", reqId, String(url));
-					emit("done", { url: String(url), reqId, streamEvent: "close", doneReason: "stream-closed", error: true });
+					emit("done", { url: String(url), reqId, conversationId, pageConversationId: conversationIdFromUrl(), streamEvent: "close", doneReason: "stream-closed", error: true });
 					throw err;
 				});
 		};
@@ -119,6 +185,54 @@
 			return JSON.parse(text);
 		} catch (e) {
 			return null;
+		}
+	}
+
+	function findTranscriptId(value, depth) {
+		if (!value || depth > 6) return "";
+		if (typeof value !== "object") return "";
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				const found = findTranscriptId(item, depth + 1);
+				if (found) return found;
+			}
+			return "";
+		}
+		const direct = value.transcriptId || value.transcript_id || value.transcriptID;
+		if (direct) return String(direct);
+		if (value.transcript && typeof value.transcript === "object") {
+			const nested = value.transcript.id || value.transcript.transcriptId;
+			if (nested) return String(nested);
+		}
+		for (const key of Object.keys(value)) {
+			const found = findTranscriptId(value[key], depth + 1);
+			if (found) return found;
+		}
+		return "";
+	}
+
+	function extractTranscriptIdFromBody(body) {
+		try {
+			if (!body) return "";
+			if (typeof body === "string") return findTranscriptId(safeJsonParse(body), 0);
+			if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+				return body.get("transcriptId") || body.get("transcript_id") || "";
+			}
+			if (typeof FormData !== "undefined" && body instanceof FormData) {
+				return String(body.get("transcriptId") || body.get("transcript_id") || "");
+			}
+			if (typeof body === "object") return findTranscriptId(body, 0);
+			return "";
+		} catch (e) {
+			return "";
+		}
+	}
+
+	function conversationIdFromUrl() {
+		try {
+			return new URL(window.location && window.location.href ? window.location.href : "").searchParams.get("t") || "";
+		} catch (e) {
+			return "";
 		}
 	}
 
@@ -170,13 +284,15 @@
 		}
 	}
 
-	function broadcastLastInput(lastInput) {
+	function broadcastLastInput(lastInput, conversationId) {
 		try {
 			window.postMessage({
 				__naiIndicator: true,
 				source: "interceptor",
 				at: Date.now(),
 				lastInput: lastInput || "",
+				conversationId: conversationId || "",
+				pageConversationId: conversationIdFromUrl(),
 			}, "*");
 		} catch (e) {}
 	}
@@ -194,7 +310,8 @@
 			if (isAiUrl(url)) {
 				const body = init && init.body;
 				const lastInput = extractLastInputFromBody(body);
-				broadcastLastInput(lastInput);
+				const conversationId = extractTranscriptIdFromBody(body) || conversationIdFromUrl();
+				broadcastLastInput(lastInput, conversationId);
 			}
 		} catch (e) {
 			// 绝不影响页面

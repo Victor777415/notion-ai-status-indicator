@@ -15,18 +15,15 @@
     const DONE_GRACE_MS = 5000;
     const IDLE_FALLBACK_MS = 180000;
     const DONE_RESET_MS = 180000;
+    const FALLBACK_CONVERSATION_KEY = "__tab__";
 
     // 悬浮窗消息（须与 service-worker.js 一致）
     const MSG_GET_SNAPSHOT = "GET_SNAPSHOT";
     const MSG_SNAPSHOT = "NAI_SNAPSHOT";
     const MSG_FOCUS_TAB = "FOCUS_TAB";
 
-    let current = STATES.IDLE;
-    let resetTimer = null;
-    let doneGraceTimer = null;
-    let idleFallbackTimer = null;
-    let lastInput = "";
-    const activeStreams = new Set();
+    const conversations = new Map();
+    let lastLocationKey = "";
 
     function isKnownState(state) {
         return state === STATES.IDLE ||
@@ -35,29 +32,75 @@
             state === STATES.DONE;
     }
 
-    function setState(next, extra) {
-        if (!isKnownState(next)) return;
-        clearTimeout(resetTimer);
-        resetTimer = null;
-        const meta = extra || {};
-        if (next === current && next !== STATES.DONE && !meta.forceReport) return;
-        current = next;
-        reportState(next, meta);
-        if (next === STATES.DONE) {
-            resetTimer = setTimeout(() => setState(STATES.IDLE), DONE_RESET_MS);
+    function conversationIdFromUrl(url) {
+        try {
+            return new URL(url || location.href, location.href).searchParams.get("t") || "";
+        } catch (e) {
+            return "";
         }
     }
 
-    function reportState(state, extra) {
+    function normalizeConversationId(value) {
+        const s = String(value || "").trim();
+        return s || "";
+    }
+
+    function conversationKey(conversationId) {
+        return normalizeConversationId(conversationId) || FALLBACK_CONVERSATION_KEY;
+    }
+
+    function publicConversationId(key) {
+        return key === FALLBACK_CONVERSATION_KEY ? "" : key;
+    }
+
+    function ensureConversation(key) {
+        let c = conversations.get(key);
+        if (!c) {
+            c = {
+                current: STATES.IDLE,
+                resetTimer: null,
+                doneGraceTimer: null,
+                idleFallbackTimer: null,
+                lastInput: "",
+                activeStreams: new Set(),
+            };
+            conversations.set(key, c);
+        }
+        return c;
+    }
+
+    function clearResetTimer(c) {
+        if (!c.resetTimer) return;
+        clearTimeout(c.resetTimer);
+        c.resetTimer = null;
+    }
+
+    function setState(key, next, extra) {
+        if (!isKnownState(next)) return;
+        const c = ensureConversation(key);
+        clearResetTimer(c);
+        const meta = extra || {};
+        if (next === c.current && next !== STATES.DONE && !meta.forceReport) return;
+        c.current = next;
+        reportState(key, next, meta);
+        if (next === STATES.DONE) {
+            c.resetTimer = setTimeout(() => setState(key, STATES.IDLE), DONE_RESET_MS);
+        }
+    }
+
+    function reportState(key, state, extra) {
         const meta = Object.assign({}, extra || {});
         delete meta.forceReport;
+        const conversationId = publicConversationId(key);
         try {
             chrome.runtime.sendMessage(Object.assign({
                 type: "NAI_STATE",
                 state,
                 url: location.href,
                 title: document.title,
-                lastInput: lastInput || "",
+                conversationId,
+                pageConversationId: conversationIdFromUrl(),
+                lastInput: ensureConversation(key).lastInput || "",
                 at: Date.now(),
             }, meta));
         } catch (e) {
@@ -65,96 +108,153 @@
         }
     }
 
-    function cancelDoneGrace(reason) {
-        if (!doneGraceTimer) return;
-        clearTimeout(doneGraceTimer);
-        doneGraceTimer = null;
-        console.debug(TAG, "done grace cancel", { reason, activeStreams: activeStreams.size, at: Date.now() });
+    function cancelDoneGrace(c, reason) {
+        if (!c.doneGraceTimer) return;
+        clearTimeout(c.doneGraceTimer);
+        c.doneGraceTimer = null;
+        console.debug(TAG, "done grace cancel", { reason, activeStreams: c.activeStreams.size, at: Date.now() });
     }
 
-    function clearIdleFallback() {
-        if (!idleFallbackTimer) return;
-        clearTimeout(idleFallbackTimer);
-        idleFallbackTimer = null;
+    function clearIdleFallback(c) {
+        if (!c.idleFallbackTimer) return;
+        clearTimeout(c.idleFallbackTimer);
+        c.idleFallbackTimer = null;
     }
 
-    function scheduleIdleFallback() {
-        clearIdleFallback();
-        idleFallbackTimer = setTimeout(() => {
-            idleFallbackTimer = null;
-            if (activeStreams.size > 0) return;
+    function scheduleIdleFallback(key) {
+        const c = ensureConversation(key);
+        clearIdleFallback(c);
+        c.idleFallbackTimer = setTimeout(() => {
+            c.idleFallbackTimer = null;
+            if (c.activeStreams.size > 0) return;
             console.debug(TAG, "done reason idle-fallback", { at: Date.now() });
-            setState(STATES.DONE, { doneReason: "idle-fallback", forceReport: true });
+            setState(key, STATES.DONE, { doneReason: "idle-fallback", forceReport: true });
         }, IDLE_FALLBACK_MS);
     }
 
-    function scheduleDoneGrace() {
-        clearIdleFallback();
-        if (doneGraceTimer) clearTimeout(doneGraceTimer);
-        console.debug(TAG, "done grace start", { activeStreams: activeStreams.size, at: Date.now() });
-        doneGraceTimer = setTimeout(() => {
-            doneGraceTimer = null;
-            if (activeStreams.size > 0) return;
+    function scheduleDoneGrace(key) {
+        const c = ensureConversation(key);
+        clearIdleFallback(c);
+        if (c.doneGraceTimer) clearTimeout(c.doneGraceTimer);
+        console.debug(TAG, "done grace start", { activeStreams: c.activeStreams.size, at: Date.now() });
+        c.doneGraceTimer = setTimeout(() => {
+            c.doneGraceTimer = null;
+            if (c.activeStreams.size > 0) return;
             console.debug(TAG, "done reason stream-closed", { at: Date.now() });
-            setState(STATES.DONE, { doneReason: "stream-closed", forceReport: true });
+            setState(key, STATES.DONE, { doneReason: "stream-closed", forceReport: true });
         }, DONE_GRACE_MS);
     }
 
-    function onStreamOpen(reqId) {
-        activeStreams.add(reqId);
-        cancelDoneGrace("new-stream");
-        clearIdleFallback();
-        setState(STATES.THINKING, { reqId, forceReport: true });
+    function onStreamOpen(key, reqId) {
+        const c = ensureConversation(key);
+        c.activeStreams.add(reqId);
+        cancelDoneGrace(c, "new-stream");
+        clearIdleFallback(c);
+        setState(key, STATES.THINKING, { reqId, forceReport: true });
     }
 
-    function onStreamResponding(reqId) {
-        if (reqId && !activeStreams.has(reqId)) activeStreams.add(reqId);
-        cancelDoneGrace("stream-responding");
-        clearIdleFallback();
-        setState(STATES.RESPONDING, { reqId, forceReport: true });
+    function onStreamResponding(key, reqId) {
+        const c = ensureConversation(key);
+        if (reqId && !c.activeStreams.has(reqId)) c.activeStreams.add(reqId);
+        cancelDoneGrace(c, "stream-responding");
+        clearIdleFallback(c);
+        setState(key, STATES.RESPONDING, { reqId, forceReport: true });
     }
 
-    function onStreamClose(reqId) {
-        if (reqId) activeStreams.delete(reqId);
-        console.debug(TAG, "stream close observed", { reqId, activeStreams: activeStreams.size, at: Date.now() });
-        if (activeStreams.size === 0) scheduleDoneGrace();
+    function onStreamClose(key, reqId) {
+        const c = ensureConversation(key);
+        if (reqId) c.activeStreams.delete(reqId);
+        console.debug(TAG, "stream close observed", { reqId, activeStreams: c.activeStreams.size, at: Date.now() });
+        if (c.activeStreams.size === 0) scheduleDoneGrace(key);
     }
 
     function applyDetectorState(d) {
         const reqId = d && d.reqId ? String(d.reqId) : "";
+        const key = conversationKey(d.conversationId || d.pageConversationId || conversationIdFromUrl());
+        const c = ensureConversation(key);
+        if (typeof d.lastInput === "string") c.lastInput = d.lastInput;
         if (reqId && d.state === STATES.THINKING) {
-            onStreamOpen(reqId);
+            onStreamOpen(key, reqId);
             return;
         }
         if (reqId && d.state === STATES.RESPONDING) {
-            onStreamResponding(reqId);
+            onStreamResponding(key, reqId);
             return;
         }
         if (reqId && d.state === STATES.DONE) {
-            onStreamClose(reqId);
+            onStreamClose(key, reqId);
             return;
         }
 
         if (d.state === STATES.THINKING || d.state === STATES.RESPONDING) {
-            cancelDoneGrace("legacy-running");
-            setState(d.state, { forceReport: true });
-            if (activeStreams.size === 0) scheduleIdleFallback();
+            cancelDoneGrace(c, "legacy-running");
+            setState(key, d.state, { forceReport: true });
+            if (c.activeStreams.size === 0) scheduleIdleFallback(key);
             return;
         }
         if (d.state === STATES.DONE) {
-            if (activeStreams.size === 0) scheduleDoneGrace();
+            if (c.activeStreams.size === 0) scheduleDoneGrace(key);
             return;
         }
-        if (d.state === STATES.IDLE && activeStreams.size === 0 && !doneGraceTimer) {
-            setState(STATES.IDLE);
+        if (d.state === STATES.IDLE && c.activeStreams.size === 0 && !c.doneGraceTimer) {
+            setState(key, STATES.IDLE);
         }
+    }
+
+    function reportLocation(reason) {
+        const conversationId = conversationIdFromUrl();
+        const key = `${conversationId}|${location.href}|${document.title}`;
+        if (key === lastLocationKey && reason !== "force") return;
+        lastLocationKey = key;
+        try {
+            chrome.runtime.sendMessage({
+                type: "NAI_LOCATION",
+                conversationId,
+                url: location.href,
+                title: document.title,
+                at: Date.now(),
+            });
+        } catch (e) {}
+    }
+
+    function checkLocationSync(reason) {
+        reportLocation(reason || "change");
+    }
+
+    function installLocationHooks() {
+        try {
+            const origPushState = history.pushState;
+            history.pushState = function () {
+                const ret = origPushState.apply(this, arguments);
+                setTimeout(() => checkLocationSync("pushState"), 0);
+                return ret;
+            };
+            const origReplaceState = history.replaceState;
+            history.replaceState = function () {
+                const ret = origReplaceState.apply(this, arguments);
+                setTimeout(() => checkLocationSync("replaceState"), 0);
+                return ret;
+            };
+        } catch (e) {}
+        window.addEventListener("popstate", () => setTimeout(() => checkLocationSync("popstate"), 0));
+        try {
+            const titleEl = document.querySelector("title");
+            if (titleEl && typeof MutationObserver !== "undefined") {
+                new MutationObserver(() => checkLocationSync("title")).observe(titleEl, { childList: true, characterData: true, subtree: true });
+            }
+        } catch (e) {}
+        setInterval(() => checkLocationSync("poll"), 1000);
+        reportLocation("force");
     }
 
     window.addEventListener("message", (ev) => {
         if (ev.source !== window) return;
         const d = ev.data;
         if (!d || d.__naiIndicator !== true) return;
-        if (typeof d.lastInput === "string") lastInput = d.lastInput;
+        if (typeof d.lastInput === "string") {
+            const key = conversationKey(d.conversationId || d.pageConversationId || conversationIdFromUrl());
+            ensureConversation(key).lastInput = d.lastInput;
+        }
         if (!isKnownState(d.state)) return;
         applyDetectorState(d);
     });
@@ -308,7 +408,7 @@
 
     function focusConversation(c) {
         try {
-            chrome.runtime.sendMessage({ type: MSG_FOCUS_TAB, tabId: c.tabId, windowId: c.windowId });
+            chrome.runtime.sendMessage({ type: MSG_FOCUS_TAB, conversationId: c.conversationId, tabId: c.tabId, windowId: c.windowId });
         } catch (e) {}
     }
 
@@ -342,10 +442,19 @@ chrome.runtime.onMessage.addListener((msg) => {
     });
     // ============================================================================
 
+    function reportCurrentVisibleState() {
+        reportLocation("force");
+        const key = conversationKey(conversationIdFromUrl());
+        const c = conversations.get(key);
+        if (c) reportState(key, c.current, { forceReport: true });
+    }
+
+    installLocationHooks();
+
     // T-001：保留 PiP 代码但不提供页面内入口；因此不再自动挂载任何可见元素。
     // 仍在页面可见/返回前后上报一次状态，供桌面端保持刷新。
-    window.addEventListener("pageshow", () => reportState(current));
+    window.addEventListener("pageshow", reportCurrentVisibleState);
     document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") reportState(current);
+        if (document.visibilityState === "visible") reportCurrentVisibleState();
     });
 })();

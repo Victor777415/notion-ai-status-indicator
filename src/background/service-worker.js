@@ -12,6 +12,10 @@ const recentDoneAt = new Map();
 const tabBadgeTimers = new Map();
 const notificationTabs = new Map();
 const lastNotificationAt = new Map();
+const conversationLastTabIds = new Map();
+const tabCurrentConversationIds = new Map();
+const tabConversationIds = new Map();
+const loggedFallbackTabs = new Set();
 
 const STORE_KEY = "nai_conversations";
 const BADGE_CLEAR_MS = 5000;
@@ -33,6 +37,52 @@ function trimText(t, max) {
 	const s = String(t || "").trim();
 	if (!s) return "";
 	return s.length > max ? s.slice(0, max) : s;
+}
+
+function conversationIdFromUrl(url) {
+	try {
+		return new URL(url || "").searchParams.get("t") || "";
+	} catch (e) {
+		return "";
+	}
+}
+
+function fallbackConversationId(tabId) {
+	return `tab:${tabId}`;
+}
+
+function normalizeConversationId(value, tabId) {
+	const s = String(value || "").trim();
+	if (s) return s;
+	if (!loggedFallbackTabs.has(tabId)) {
+		loggedFallbackTabs.add(tabId);
+		console.log("[NAI-BG] conversation fallback tabId compatibility", "tab", tabId);
+	}
+	return fallbackConversationId(tabId);
+}
+
+function isFallbackConversationId(conversationId) {
+	return String(conversationId || "").startsWith("tab:");
+}
+
+function trackTabConversation(tabId, conversationId) {
+	if (tabId == null || !conversationId) return;
+	conversationLastTabIds.set(conversationId, tabId);
+	tabCurrentConversationIds.set(tabId, conversationId);
+	let set = tabConversationIds.get(tabId);
+	if (!set) {
+		set = new Set();
+		tabConversationIds.set(tabId, set);
+	}
+	set.add(conversationId);
+}
+
+function currentConversationIdForTab(tabId, tab) {
+	if (tab && tab.url) {
+		const fromUrl = conversationIdFromUrl(tab.url);
+		if (fromUrl) return fromUrl;
+	}
+	return tabCurrentConversationIds.get(tabId) || "";
 }
 
 // ================= 桌面伴侣 WebSocket（Codex 式常驻置顶）=================
@@ -112,10 +162,17 @@ function handleDesktopCommand(msg) {
 		focusLatestNotionTab();
 		return;
 	}
+	if (typeof tabId === "string" && tabId.startsWith("conversation:")) {
+		focusConversation(tabId.slice("conversation:".length), { dismissDone: true });
+		return;
+	}
 
 	const id = Number(tabId);
-	if (!Number.isFinite(id)) return;
-	focusTab(id, null, { dismissDone: true });
+	if (Number.isFinite(id)) {
+		focusTab(id, null, { dismissDone: true });
+		return;
+	}
+	if (tabId) focusConversation(String(tabId), { dismissDone: true });
 }
 
 function isNotionUrl(url) {
@@ -129,24 +186,19 @@ function isNotionUrl(url) {
 
 function focusLatestNotionTab() {
 	// 1) 有记录：聚焦 lastUpdateAt 最新
-	let bestTabId = null;
+	let bestConversationId = null;
 	let bestTs = -1;
-	for (const [tabId, ts] of lastUpdateAt.entries()) {
-		if (!tabUrls.has(tabId)) continue;
-		const url = tabUrls.get(tabId);
+	for (const [conversationId, ts] of lastUpdateAt.entries()) {
+		if (!tabUrls.has(conversationId)) continue;
+		const url = tabUrls.get(conversationId);
 		if (!url || !isNotionUrl(url)) continue;
 		if (ts > bestTs) {
 			bestTs = ts;
-			bestTabId = tabId;
+			bestConversationId = conversationId;
 		}
 	}
-	if (bestTabId != null) {
-		chrome.tabs.get(bestTabId, (tab) => {
-			if (chrome.runtime.lastError || !tab) return;
-			if (tab.windowId != null) chrome.windows.update(tab.windowId, { focused: true });
-			chrome.tabs.update(bestTabId, { active: true });
-			markConversationRead(bestTabId);
-		});
+	if (bestConversationId != null) {
+		focusConversation(bestConversationId, { dismissDone: true });
 		return;
 	}
 
@@ -161,7 +213,7 @@ function focusLatestNotionTab() {
 		if (t.windowId != null) chrome.windows.update(t.windowId, { focused: true });
 		if (t.id != null) {
 			chrome.tabs.update(t.id, { active: true });
-			markConversationRead(t.id);
+			markReadIfViewed(t.id, t);
 		}
 	});
 }
@@ -185,14 +237,16 @@ let creating = null;
 			const c = list[key];
 			const tabId = Number(c && c.tabId);
 			if (!Number.isFinite(tabId)) continue;
-			conversationTabs.add(tabId);
-			if (c.state) tabStates.set(tabId, c.state);
-			if (c.url) tabUrls.set(tabId, c.url);
-			if (c.title) tabTitles.set(tabId, c.title);
-			if (c.lastInput) tabLastInputs.set(tabId, c.lastInput);
-			if (c.windowId != null) tabWindows.set(tabId, c.windowId);
-			if (c.updatedAt) lastUpdateAt.set(tabId, c.updatedAt);
-			if (c.state === STATES.DONE && c.updatedAt) recentDoneAt.set(tabId, c.updatedAt);
+			const conversationId = c.conversationId ? normalizeConversationId(c.conversationId, tabId) : fallbackConversationId(tabId);
+			conversationTabs.add(conversationId);
+			trackTabConversation(tabId, conversationId);
+			if (c.state) tabStates.set(conversationId, c.state);
+			if (c.url) tabUrls.set(conversationId, c.url);
+			if (c.title) tabTitles.set(conversationId, c.title);
+			if (c.lastInput) tabLastInputs.set(conversationId, c.lastInput);
+			if (c.windowId != null) tabWindows.set(conversationId, c.windowId);
+			if (c.updatedAt) lastUpdateAt.set(conversationId, c.updatedAt);
+			if (c.state === STATES.DONE && c.updatedAt) recentDoneAt.set(conversationId, c.updatedAt);
 		}
 	} catch (e) {
 		/* 无历史或 session 不可用，忽略 */
@@ -215,6 +269,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 		handleStateMessage(msg, sender);
 		return;
 	}
+	if (msg.type === "NAI_LOCATION") {
+		handleLocationMessage(msg, sender);
+		return;
+	}
 	if (msg.type === MSG_GET_SNAPSHOT) {
 		queryNotionTabsCount((notionTabs) => {
 			sendResponse({ conversations: buildSnapshot(), notionTabs });
@@ -222,10 +280,44 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 		return true;
 	}
 	if (msg.type === MSG_FOCUS_TAB) {
-		focusTab(msg.tabId, msg.windowId, { dismissDone: true });
+		if (msg.conversationId) {
+			focusConversation(msg.conversationId, { dismissDone: true });
+		} else {
+			focusTab(msg.tabId, msg.windowId, { dismissDone: true });
+		}
 		return;
 	}
 });
+
+function handleLocationMessage(msg, sender) {
+	const tabId = sender.tab && sender.tab.id;
+	if (tabId == null) return;
+	const fromUrl = msg.conversationId || conversationIdFromUrl(msg.url || (sender.tab && sender.tab.url) || "");
+	if (!fromUrl) return;
+	const conversationId = normalizeConversationId(fromUrl, tabId);
+	trackTabConversation(tabId, conversationId);
+
+	const titleFromSender = sender.tab && sender.tab.title ? sender.tab.title : "";
+	const title = cleanTitle(msg.title || titleFromSender);
+	let changed = false;
+	if (msg.url && tabUrls.get(conversationId) !== msg.url) {
+		tabUrls.set(conversationId, msg.url);
+		changed = true;
+	}
+	if (title && tabTitles.get(conversationId) !== title) {
+		tabTitles.set(conversationId, title);
+		changed = true;
+	}
+	if (sender.tab && sender.tab.windowId != null) tabWindows.set(conversationId, sender.tab.windowId);
+	if (conversationTabs.has(conversationId)) {
+		markReadIfViewed(tabId, sender.tab, changed ? finishStateMessage : null);
+		if (changed) return;
+	}
+	if (changed) {
+		syncStore();
+		pushDesktopSnapshot();
+	}
+}
 
 function handleStateMessage(msg, sender) {
 	const tabId = sender.tab && sender.tab.id;
@@ -235,8 +327,10 @@ function handleStateMessage(msg, sender) {
 	console.log("[NAI-BG] 收到状态", msg.state, "tab", tabId);
 
 	const at = normalizeTime(msg.at);
-	const prev = tabStates.get(tabId);
-	const hasConversation = conversationTabs.has(tabId);
+	const conversationId = normalizeConversationId(msg.conversationId || msg.pageConversationId || conversationIdFromUrl(msg.url || (sender.tab && sender.tab.url) || ""), tabId);
+	trackTabConversation(tabId, conversationId);
+	const prev = tabStates.get(conversationId);
+	const hasConversation = conversationTabs.has(conversationId);
 	const shouldRecordConversation = msg.state !== STATES.IDLE || hasConversation;
 	const doneReason = typeof msg.doneReason === "string" ? msg.doneReason : "";
 	let snapshotState = msg.state;
@@ -244,16 +338,16 @@ function handleStateMessage(msg, sender) {
 		snapshotState = prev === STATES.DONE ? STATES.DONE : STATES.IDLE;
 		if (doneReason === "idle-fallback") {
 			snapshotState = STATES.DONE;
-			console.log("[NAI-BG] idle-fallback done", "tab", tabId);
+			console.log("[NAI-BG] idle-fallback done", "tab", tabId, "conversation", conversationId);
 		}
 	}
-	tabStates.set(tabId, snapshotState);
-	console.log("[NAI-BG] 状态流", tabId, `${prev || "none"}→${snapshotState}`);
+	tabStates.set(conversationId, snapshotState);
+	console.log("[NAI-BG] 状态流", tabId, conversationId, `${prev || "none"}→${snapshotState}`);
 	if (msg.state === STATES.DONE && doneReason) {
 		if (doneReason === "idle-fallback") {
-			console.log("[NAI-BG] idle-fallback done", "tab", tabId);
+			console.log("[NAI-BG] idle-fallback done", "tab", tabId, "conversation", conversationId);
 		} else {
-			console.log("[NAI-BG] done reason", doneReason, "tab", tabId);
+			console.log("[NAI-BG] done reason", doneReason, "tab", tabId, "conversation", conversationId);
 		}
 	}
 
@@ -264,26 +358,26 @@ function handleStateMessage(msg, sender) {
 	const lastInput = trimText(msg.lastInput || "", 80);
 
 	if (shouldRecordConversation) {
-		conversationTabs.add(tabId);
-		lastUpdateAt.set(tabId, at);
-		if (msg.url) tabUrls.set(tabId, msg.url);
-		if (title) tabTitles.set(tabId, title);
-		if (lastInput) tabLastInputs.set(tabId, lastInput);
-		if (sender.tab && sender.tab.windowId != null) tabWindows.set(tabId, sender.tab.windowId);
+		conversationTabs.add(conversationId);
+		lastUpdateAt.set(conversationId, at);
+		if (msg.url) tabUrls.set(conversationId, msg.url);
+		if (title) tabTitles.set(conversationId, title);
+		if (lastInput) tabLastInputs.set(conversationId, lastInput);
+		if (sender.tab && sender.tab.windowId != null) tabWindows.set(conversationId, sender.tab.windowId);
 	}
 
 	updateTabBadge(tabId, msg.state, at);
 
 	if (msg.state === STATES.DONE) {
-		recentDoneAt.set(tabId, at);
-		if (prev !== STATES.DONE && shouldNotifyDone(tabId, at)) {
-			notifyDone(tabId, msg.url || tabUrls.get(tabId));
+		recentDoneAt.set(conversationId, at);
+		if (prev !== STATES.DONE && shouldNotifyDone(conversationId, at)) {
+			notifyDone(conversationId, msg.url || tabUrls.get(conversationId));
 			playSound();
 		}
 	}
 
 	if (msg.state === STATES.DONE) {
-		markReadIfViewed(tabId, sender.tab, finishStateMessage);
+		markReadIfViewed(tabId, sender.tab, finishStateMessage, conversationId);
 		return;
 	}
 
@@ -295,8 +389,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-	if (changeInfo.status === "loading") {
-		clearTabState(tabId);
+	if (changeInfo.url) {
+		const conversationId = conversationIdFromUrl(changeInfo.url);
+		if (conversationId) {
+			trackTabConversation(tabId, conversationId);
+			if (conversationTabs.has(conversationId)) {
+				tabUrls.set(conversationId, changeInfo.url);
+			}
+		}
 	}
 	if (changeInfo.url || changeInfo.status === "complete") {
 		pushDesktopSnapshot();
@@ -321,8 +421,13 @@ chrome.windows.onFocusChanged.addListener((windowId) => {
 });
 
 chrome.notifications.onClicked.addListener((notificationId) => {
-	const tabId = notificationTabs.get(notificationId);
-	if (tabId == null) return;
+	const conversationId = notificationTabs.get(notificationId);
+	if (conversationId == null) return;
+	const tabId = conversationLastTabIds.get(conversationId);
+	if (tabId == null) {
+		notificationTabs.delete(notificationId);
+		return;
+	}
 	chrome.tabs.get(tabId, (tab) => {
 		if (chrome.runtime.lastError || !tab) {
 			notificationTabs.delete(notificationId);
@@ -331,8 +436,7 @@ chrome.notifications.onClicked.addListener((notificationId) => {
 		if (tab.windowId != null) {
 			chrome.windows.update(tab.windowId, { focused: true });
 		}
-		chrome.tabs.update(tabId, { active: true });
-		markConversationRead(tabId);
+		focusConversation(conversationId, { dismissDone: true });
 		chrome.notifications.clear(notificationId);
 		notificationTabs.delete(notificationId);
 	});
@@ -363,14 +467,24 @@ function finishStateMessage() {
 	pushDesktopSnapshot(); // 状态变化时推给桌面伴侣
 }
 
-function markReadIfViewed(tabId, tab, after = null) {
+function tabShowsConversation(tabId, tab, conversationId) {
+	if (!conversationId) return false;
+	if (isFallbackConversationId(conversationId)) return conversationLastTabIds.get(conversationId) === tabId;
+	const current = currentConversationIdForTab(tabId, tab);
+	return current === conversationId;
+}
+
+function markReadIfViewed(tabId, tab, after = null, conversationId = null) {
 	if (!tab || !tab.active || tab.windowId == null) {
 		if (after) after();
 		return;
 	}
 	chrome.windows.get(tab.windowId, (win) => {
 		if (!chrome.runtime.lastError && win && win.focused) {
-			markConversationRead(tabId, { deferSync: Boolean(after) });
+			const targetConversationId = conversationId || currentConversationIdForTab(tabId, tab);
+			if (tabShowsConversation(tabId, tab, targetConversationId)) {
+				markConversationRead(targetConversationId, { deferSync: Boolean(after) });
+			}
 		}
 		if (after) after();
 	});
@@ -379,16 +493,19 @@ function markReadIfViewed(tabId, tab, after = null) {
 // 把当前所有对话镜像到 session 存储，供弹出面板读取（面板不必唤醒 SW 即可拿到最新列表）；同时广播给所有悬浮窗。
 function syncStore() {
 	const list = {};
-	for (const tabId of conversationTabs) {
-		const state = tabStates.get(tabId) || STATES.DONE;
-		const updatedAt = lastUpdateAt.get(tabId) || Date.now();
-		list[tabId] = {
+	for (const conversationId of conversationTabs) {
+		const tabId = conversationLastTabIds.get(conversationId);
+		if (tabId == null) continue;
+		const state = tabStates.get(conversationId) || STATES.DONE;
+		const updatedAt = lastUpdateAt.get(conversationId) || Date.now();
+		list[conversationId] = {
+			conversationId,
 			tabId,
 			state,
-			url: tabUrls.get(tabId) || "",
-			title: tabTitles.get(tabId) || "",
-			lastInput: tabLastInputs.get(tabId) || "",
-			windowId: tabWindows.has(tabId) ? tabWindows.get(tabId) : null,
+			url: tabUrls.get(conversationId) || "",
+			title: tabTitles.get(conversationId) || "",
+			lastInput: tabLastInputs.get(conversationId) || "",
+			windowId: tabWindows.has(conversationId) ? tabWindows.get(conversationId) : null,
 			updatedAt,
 			lastUpdateAt: updatedAt,
 		};
@@ -412,9 +529,7 @@ function updateTabBadge(tabId, state, at) {
 		safeAction(() => chrome.action.setBadgeBackgroundColor({ tabId, color: BADGE.DONE_COLOR }));
 		safeAction(() => chrome.action.setBadgeText({ tabId, text: BADGE.DONE_TEXT }));
 		tabBadgeTimers.set(tabId, setTimeout(() => {
-			if (tabStates.get(tabId) === STATES.DONE && recentDoneAt.get(tabId) === at) {
-				safeAction(() => chrome.action.setBadgeText({ tabId, text: "" }));
-			}
+			safeAction(() => chrome.action.setBadgeText({ tabId, text: "" }));
 			tabBadgeTimers.delete(tabId);
 		}, BADGE_CLEAR_MS));
 		return;
@@ -480,17 +595,27 @@ function shouldNotifyDone(tabId, at) {
 }
 
 function clearTabState(tabId, options = {}) {
-	tabStates.delete(tabId);
-	tabUrls.delete(tabId);
-	tabTitles.delete(tabId);
-	tabWindows.delete(tabId);
-	tabLastInputs.delete(tabId);
-	lastUpdateAt.delete(tabId);
-	conversationTabs.delete(tabId);
-	recentDoneAt.delete(tabId);
+	const ids = new Set(tabConversationIds.get(tabId) || []);
+	for (const [conversationId, lastTabId] of conversationLastTabIds) {
+		if (lastTabId === tabId) ids.add(conversationId);
+	}
+	for (const conversationId of ids) {
+		tabStates.delete(conversationId);
+		tabUrls.delete(conversationId);
+		tabTitles.delete(conversationId);
+		tabWindows.delete(conversationId);
+		tabLastInputs.delete(conversationId);
+		lastUpdateAt.delete(conversationId);
+		conversationTabs.delete(conversationId);
+		recentDoneAt.delete(conversationId);
+		lastNotificationAt.delete(conversationId);
+		conversationLastTabIds.delete(conversationId);
+	}
+	tabConversationIds.delete(tabId);
+	tabCurrentConversationIds.delete(tabId);
 	clearTabBadgeTimer(tabId);
 	if (options.clearNotificationThrottle) {
-		lastNotificationAt.delete(tabId);
+		for (const conversationId of ids) lastNotificationAt.delete(conversationId);
 	}
 	safeAction(() => chrome.action.setBadgeText({ tabId, text: "" }));
 	updateGlobalBadge();
@@ -511,8 +636,8 @@ function clearGlobalBadgeTimer() {
 	globalBadgeTimer = null;
 }
 
-function notifyDone(tabId, url) {
-	const notificationId = `nai-done-${tabId}-${Date.now()}`;
+function notifyDone(conversationId, url) {
+	const notificationId = `nai-done-${conversationId}-${Date.now()}`;
 	console.log("[NAI-BG] 触发完成通知", notificationId);
 	chrome.notifications.create(
 		notificationId,
@@ -527,7 +652,7 @@ function notifyDone(tabId, url) {
 			if (chrome.runtime.lastError) {
 				console.warn("[NAI-BG] 通知创建失败：", chrome.runtime.lastError.message);
 			}
-			notificationTabs.set(createdId || notificationId, tabId);
+			notificationTabs.set(createdId || notificationId, conversationId);
 		},
 	);
 }
@@ -558,16 +683,19 @@ async function playSound() {
 // ---- 悬浮窗（画中画）数据通道 ----
 function buildSnapshot() {
 	const list = [];
-	for (const tabId of conversationTabs) {
-		const state = tabStates.get(tabId) || STATES.DONE;
-		const updatedAt = lastUpdateAt.get(tabId) || Date.now();
+	for (const conversationId of conversationTabs) {
+		const tabId = conversationLastTabIds.get(conversationId);
+		if (tabId == null) continue;
+		const state = tabStates.get(conversationId) || STATES.DONE;
+		const updatedAt = lastUpdateAt.get(conversationId) || Date.now();
 		list.push({
+			conversationId,
 			tabId,
 			state,
-			url: tabUrls.get(tabId) || "",
-			title: tabTitles.get(tabId) || "",
-			lastInput: tabLastInputs.get(tabId) || "",
-			windowId: tabWindows.has(tabId) ? tabWindows.get(tabId) : null,
+			url: tabUrls.get(conversationId) || "",
+			title: tabTitles.get(conversationId) || "",
+			lastInput: tabLastInputs.get(conversationId) || "",
+			windowId: tabWindows.has(conversationId) ? tabWindows.get(conversationId) : null,
 			updatedAt,
 			lastUpdateAt: updatedAt,
 		});
@@ -578,7 +706,11 @@ function buildSnapshot() {
 function broadcastSnapshot() {
 	const conversations = buildSnapshot();
 	queryNotionTabsCount((notionTabs) => {
-		for (const tabId of conversationTabs) {
+		const tabIds = new Set();
+		for (const tabId of conversationLastTabIds.values()) {
+			if (tabId != null) tabIds.add(tabId);
+		}
+		for (const tabId of tabIds) {
 			safeAction(() => chrome.tabs.sendMessage(tabId, { type: MSG_SNAPSHOT, conversations, notionTabs }));
 		}
 	});
@@ -599,26 +731,60 @@ function queryNotionTabsCount(callback) {
 }
 
 function focusTab(tabId, windowId, options = {}) {
+	if (typeof tabId === "string" && tabId.startsWith("conversation:")) {
+		focusConversation(tabId.slice("conversation:".length), options);
+		return;
+	}
 	const id = Number(tabId);
 	if (!Number.isFinite(id)) return;
 	chrome.tabs.get(id, (tab) => {
 		if (chrome.runtime.lastError || !tab) return;
 		if (tab.windowId != null) chrome.windows.update(tab.windowId, { focused: true });
 		chrome.tabs.update(id, { active: true });
-		if (options.dismissDone && tabStates.get(id) === STATES.DONE) {
-			markConversationRead(id);
+		if (options.dismissDone) {
+			markReadIfViewed(id, tab);
 		}
 	});
 }
 
-function markConversationRead(tabId, options = {}) {
-	if (!conversationTabs.has(tabId) || tabStates.get(tabId) !== STATES.DONE) return false;
-	tabUrls.delete(tabId);
-	tabTitles.delete(tabId);
-	tabWindows.delete(tabId);
-	tabLastInputs.delete(tabId);
-	lastUpdateAt.delete(tabId);
-	conversationTabs.delete(tabId);
+function conversationUrl(conversationId) {
+	return `${NOTION_AI_URL}?t=${encodeURIComponent(conversationId)}`;
+}
+
+function focusConversation(conversationId, options = {}) {
+	if (!conversationId) return;
+	const tabId = conversationLastTabIds.get(conversationId);
+	if (tabId == null) return;
+	chrome.tabs.get(tabId, (tab) => {
+		if (chrome.runtime.lastError || !tab) return;
+		if (tab.windowId != null) chrome.windows.update(tab.windowId, { focused: true });
+		const current = currentConversationIdForTab(tabId, tab);
+		const details = { active: true };
+		if (!isFallbackConversationId(conversationId) && current !== conversationId) {
+			details.url = conversationUrl(conversationId);
+		}
+		chrome.tabs.update(tabId, details);
+		if (options.dismissDone) {
+			markConversationRead(conversationId);
+		}
+	});
+}
+
+function markConversationRead(conversationId, options = {}) {
+	if (!conversationTabs.has(conversationId) || tabStates.get(conversationId) !== STATES.DONE) return false;
+	tabUrls.delete(conversationId);
+	tabTitles.delete(conversationId);
+	tabWindows.delete(conversationId);
+	tabLastInputs.delete(conversationId);
+	lastUpdateAt.delete(conversationId);
+	conversationTabs.delete(conversationId);
+	recentDoneAt.delete(conversationId);
+	lastNotificationAt.delete(conversationId);
+	const tabId = conversationLastTabIds.get(conversationId);
+	if (tabId != null && tabConversationIds.has(tabId)) {
+		tabConversationIds.get(tabId).delete(conversationId);
+	}
+	conversationLastTabIds.delete(conversationId);
 	if (!options.deferSync) {
 		syncStore();
 		pushDesktopSnapshot();

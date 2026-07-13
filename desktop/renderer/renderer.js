@@ -121,6 +121,7 @@ function render() {
 	for (const c of list) {
 		const card = document.createElement("div");
 		card.className = "card";
+		card.dataset.key = c.conversationId || String(c.tabId || "");
 
 		const ind = document.createElement("span");
 		ind.className = "ind " + (isRunning(c.state) ? "run spin" : (c.state === "done" ? "done" : ""));
@@ -141,7 +142,7 @@ function render() {
 		card.appendChild(main);
 
 		card.addEventListener("click", () => {
-			window.naiBridge.openNotion({ tabId: c.tabId });
+			window.naiBridge.openNotion({ tabId: c.conversationId ? `conversation:${c.conversationId}` : c.tabId });
 		});
 
 		cardsEl.appendChild(card);
