@@ -7,6 +7,8 @@ const { WebSocketServer } = require("ws");
 
 const WS_PORT = 8787;
 const HEARTBEAT_MS = 20000;
+const HIDE_NO_NOTION_MS = 5000;
+const HIDE_DISCONNECTED_MS = 10000;
 const POSITION_FILE = path.join(app.getPath("userData"), "pet-position.json");
 const DEFAULT_MARGIN = 24;
 
@@ -15,8 +17,12 @@ let wss = null;
 let heartbeatTimer = null;
 const clients = new Set();
 let lastSnapshot = [];
+let lastNotionTabs = 0;
 let lastBounds = null; // {x,y,width,height}
 let dragState = null; // { startScreen, startBounds }
+let noNotionHideTimer = null;
+let disconnectedHideTimer = null;
+let petVisible = true;
 
 function clamp(n, min, max) {
 	return Math.min(max, Math.max(min, n));
@@ -103,6 +109,7 @@ function createWindow() {
 	mainWindow.webContents.on("did-finish-load", () => {
 		mainWindow.webContents.send("nai:snapshot", lastSnapshot);
 		mainWindow.webContents.send("nai:connection", { connected: clients.size > 0 });
+		schedulePetVisibility();
 	});
 
 	mainWindow.on("closed", () => {
@@ -127,7 +134,9 @@ function startWsServer() {
 			}
 			if (msg && msg.type === "snapshot") {
 				lastSnapshot = Array.isArray(msg.conversations) ? msg.conversations : [];
+				lastNotionTabs = Number.isFinite(msg.notionTabs) ? msg.notionTabs : lastNotionTabs;
 				if (mainWindow) mainWindow.webContents.send("nai:snapshot", lastSnapshot);
+				schedulePetVisibility();
 			} else if (msg && msg.type === "pong") {
 				socket.lastPongAt = Date.now();
 			}
@@ -140,6 +149,7 @@ function startWsServer() {
 
 		socket.on("error", () => {
 			clients.delete(socket);
+			sendConnectionStatus();
 		});
 	});
 
@@ -158,6 +168,69 @@ function startHeartbeat() {
 
 function sendConnectionStatus() {
 	if (mainWindow) mainWindow.webContents.send("nai:connection", { connected: clients.size > 0 });
+	schedulePetVisibility();
+}
+
+function clearPetVisibilityTimers() {
+	if (noNotionHideTimer) {
+		clearTimeout(noNotionHideTimer);
+		noNotionHideTimer = null;
+	}
+	if (disconnectedHideTimer) {
+		clearTimeout(disconnectedHideTimer);
+		disconnectedHideTimer = null;
+	}
+}
+
+function showPet() {
+	clearPetVisibilityTimers();
+	if (!mainWindow) return;
+	if (lastBounds) mainWindow.setBounds(lastBounds, false);
+	if (!petVisible || !mainWindow.isVisible()) {
+		mainWindow.show();
+		petVisible = true;
+		console.log("[NAI-PET] pet shown");
+	}
+}
+
+function hidePet(reason) {
+	if (!mainWindow) return;
+	if (petVisible || mainWindow.isVisible()) {
+		mainWindow.hide();
+		petVisible = false;
+		console.log("[NAI-PET] pet hidden", reason || "");
+	}
+}
+
+function schedulePetVisibility() {
+	if (clients.size > 0 && lastNotionTabs >= 1) {
+		showPet();
+		return;
+	}
+
+	if (noNotionHideTimer) {
+		clearTimeout(noNotionHideTimer);
+		noNotionHideTimer = null;
+	}
+	if (disconnectedHideTimer) {
+		clearTimeout(disconnectedHideTimer);
+		disconnectedHideTimer = null;
+	}
+
+	if (clients.size === 0) {
+		disconnectedHideTimer = setTimeout(() => {
+			disconnectedHideTimer = null;
+			if (clients.size === 0) hidePet("disconnected");
+		}, HIDE_DISCONNECTED_MS);
+		return;
+	}
+
+	if (lastNotionTabs < 1) {
+		noNotionHideTimer = setTimeout(() => {
+			noNotionHideTimer = null;
+			if (clients.size > 0 && lastNotionTabs < 1) hidePet("no-notion-tabs");
+		}, HIDE_NO_NOTION_MS);
+	}
 }
 
 function sendToExtension(payload) {

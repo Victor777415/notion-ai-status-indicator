@@ -39,6 +39,10 @@ function trimText(t, max) {
 const DESKTOP_WS_URL = "ws://127.0.0.1:8787";
 const DESKTOP_RECONNECT_MS = 5000;
 const NOTION_AI_URL = "https://app.notion.com/chat";
+const NOTION_TAB_URL_PATTERNS = [
+	"*://app.notion.com/*",
+	"*://*.notion.so/*",
+];
 let desktopSocket = null;
 let desktopReconnectTimer = null;
 
@@ -85,10 +89,13 @@ function scheduleDesktopReconnect() {
 
 function pushDesktopSnapshot() {
 	if (!desktopSocket || desktopSocket.readyState !== WebSocket.OPEN) return;
-	try {
-		const snapshot = buildSnapshot();
-		desktopSocket.send(JSON.stringify({ type: "snapshot", conversations: snapshot }));
-	} catch (e) {}
+	queryNotionTabsCount((notionTabs) => {
+		if (!desktopSocket || desktopSocket.readyState !== WebSocket.OPEN) return;
+		try {
+			const snapshot = buildSnapshot();
+			desktopSocket.send(JSON.stringify({ type: "snapshot", conversations: snapshot, notionTabs }));
+		} catch (e) {}
+	});
 }
 
 function sendDesktopPong() {
@@ -209,7 +216,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 		return;
 	}
 	if (msg.type === MSG_GET_SNAPSHOT) {
-		sendResponse({ conversations: buildSnapshot() });
+		queryNotionTabsCount((notionTabs) => {
+			sendResponse({ conversations: buildSnapshot(), notionTabs });
+		});
 		return true;
 	}
 	if (msg.type === MSG_FOCUS_TAB) {
@@ -276,6 +285,9 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
 	if (changeInfo.status === "loading") {
 		clearTabState(tabId);
+	}
+	if (changeInfo.url || changeInfo.status === "complete") {
+		pushDesktopSnapshot();
 	}
 });
 
@@ -553,8 +565,24 @@ function buildSnapshot() {
 
 function broadcastSnapshot() {
 	const conversations = buildSnapshot();
-	for (const tabId of conversationTabs) {
-		safeAction(() => chrome.tabs.sendMessage(tabId, { type: MSG_SNAPSHOT, conversations }));
+	queryNotionTabsCount((notionTabs) => {
+		for (const tabId of conversationTabs) {
+			safeAction(() => chrome.tabs.sendMessage(tabId, { type: MSG_SNAPSHOT, conversations, notionTabs }));
+		}
+	});
+}
+
+function queryNotionTabsCount(callback) {
+	try {
+		chrome.tabs.query({ url: NOTION_TAB_URL_PATTERNS }, (tabs) => {
+			if (chrome.runtime.lastError || !Array.isArray(tabs)) {
+				callback(0);
+				return;
+			}
+			callback(tabs.length);
+		});
+	} catch (e) {
+		callback(0);
 	}
 }
 
