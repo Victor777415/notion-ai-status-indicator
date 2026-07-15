@@ -284,3 +284,15 @@
 	- `cd desktop && npm start` launched Electron successfully; with no extension WS client it logged `[NAI-PET] pet hidden disconnected` and was stopped with SIGINT after startup.
 - Remaining:
 	- Manual runtime acceptance recommended: with no conversations only the pet should show; with expanded cards the chevron should sit between the card list and pet, right-aligned, without covering the pet.
+
+## T-012d
+- Date: 2026-07-15 (Asia/Shanghai)
+- Commit:
+	- this commit — lighten collapse chevron background
+- Changes:
+	- desktop/renderer/styles.css: Light mode collapse circle background changed from `#e4e4e7` to `#f0f0f2`, with hover at `#e4e4e7`. Dark mode collapse background changed from `#3f3f46` to `#52525b`, with hover at `#606060`. All other collapse sizing, flex placement, centering, and hidden behavior remain unchanged.
+- Self test:
+	- Visual diff confirmed only the collapse circle tint changed; the T-012c hidden/placement fix remains intact.
+	- T-012/T-012b card rendering, SVG chevron, and T-012c expand/collapse occupancy rules remain unchanged by inspection.
+- Remaining:
+	- Manual runtime acceptance still recommended if you want final on-screen comparison against the lighter Codex reference circle tint.
