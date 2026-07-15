@@ -123,8 +123,115 @@
 		console.debug(TAG, `stream ${event}`, { reqId, url, at: Date.now() });
 	}
 
+	function looksLikeDisplayText(text) {
+		const s = String(text || "").trim();
+		if (!s) return false;
+		if (/^https?:\/\//i.test(s)) return false;
+		if (/^[a-z0-9_-]{16,}$/i.test(s)) return false;
+		if (/^[{}[\]",:0-9.\s_-]+$/.test(s)) return false;
+		return /[\p{L}\p{N}]/u.test(s);
+	}
+
+	function collectTextDeltas(value, out, depth, parentKey) {
+		if (depth > 8 || value == null) return;
+		if (typeof value === "string") {
+			const key = String(parentKey || "").toLowerCase();
+			const textKeys = new Set([
+				"text",
+				"plaintext",
+				"plain_text",
+				"content",
+				"markdown",
+				"delta",
+				"answer",
+				"message",
+			]);
+			const skipKeys = new Set([
+				"id",
+				"uuid",
+				"transcriptid",
+				"transcript_id",
+				"requestid",
+				"request_id",
+				"spaceid",
+				"space_id",
+				"blockid",
+				"block_id",
+				"role",
+				"type",
+				"event",
+				"status",
+				"url",
+				"href",
+				"source",
+				"traceid",
+				"trace_id",
+				"createdat",
+				"created_at",
+				"updatedat",
+				"updated_at",
+				"model",
+			]);
+			if (!textKeys.has(key) || skipKeys.has(key)) return;
+			if (looksLikeDisplayText(value)) out.push(value.trim());
+			return;
+		}
+		if (typeof value !== "object") return;
+		if (Array.isArray(value)) {
+			for (const item of value) collectTextDeltas(item, out, depth + 1, parentKey);
+			return;
+		}
+		for (const key of Object.keys(value)) {
+			collectTextDeltas(value[key], out, depth + 1, key);
+		}
+	}
+
+	function parseLinePayload(line) {
+		let text = String(line || "").trim();
+		if (!text) return null;
+		if (text.startsWith("data:")) text = text.slice(5).trim();
+		if (!text || text === "[DONE]") return null;
+		return safeJsonParse(text);
+	}
+
+	function extractReplyDelta(chunkText) {
+		try {
+			const out = [];
+			const lines = String(chunkText || "").split(/\r?\n/);
+			for (const line of lines) {
+				const parsed = parseLinePayload(line);
+				if (parsed) collectTextDeltas(parsed, out, 0, "");
+			}
+			if (!out.length) {
+				const parsed = safeJsonParse(String(chunkText || "").trim());
+				if (parsed) collectTextDeltas(parsed, out, 0, "");
+			}
+			return out.join("").trim();
+		} catch (e) {
+			return "";
+		}
+	}
+
+	function appendReply(existing, delta) {
+		const next = String(delta || "").trim();
+		if (!next) return existing || "";
+		const current = String(existing || "");
+		let merged = current;
+		if (!merged) {
+			merged = next;
+		} else if (next.startsWith(merged)) {
+			merged = next;
+		} else if (!merged.endsWith(next)) {
+			merged += next;
+		}
+		return merged.length > 240 ? merged.slice(-240) : merged;
+	}
+
 	async function consumeStream(body, reqId, url, conversationId) {
 		let first = true;
+		let lastReply = "";
+		const decoder = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
+		let textBuffer = "";
 		try {
 			const reader = body.getReader();
 			while (true) {
@@ -134,12 +241,37 @@
 					first = false;
 					emit("responding", { reqId, url, conversationId, pageConversationId: conversationIdFromUrl() });
 				}
+				if (decoder && value && value.byteLength) {
+					textBuffer += decoder.decode(value, { stream: true });
+					let parseText = "";
+					const cut = textBuffer.lastIndexOf("\n");
+					if (cut >= 0) {
+						parseText = textBuffer.slice(0, cut + 1);
+						textBuffer = textBuffer.slice(cut + 1);
+					} else if (textBuffer.length > 8192) {
+						parseText = textBuffer;
+						textBuffer = "";
+					}
+					const delta = parseText ? extractReplyDelta(parseText) : "";
+					if (delta) {
+						lastReply = appendReply(lastReply, delta);
+						emit("responding", { reqId, url, conversationId, pageConversationId: conversationIdFromUrl(), lastReply });
+					}
+				}
+			}
+			if (decoder) {
+				textBuffer += decoder.decode();
+				const tailDelta = extractReplyDelta(textBuffer);
+				if (tailDelta) {
+					lastReply = appendReply(lastReply, tailDelta);
+					emit("responding", { reqId, url, conversationId, pageConversationId: conversationIdFromUrl(), lastReply });
+				}
 			}
 		} catch (e) {
 			// 读流异常也视为结束
 		} finally {
 			logStream("close", reqId, url);
-			emit("done", { reqId, url, conversationId, pageConversationId: conversationIdFromUrl(), streamEvent: "close", doneReason: "stream-closed" });
+			emit("done", { reqId, url, conversationId, pageConversationId: conversationIdFromUrl(), streamEvent: "close", doneReason: "stream-closed", lastReply });
 		}
 	}
 

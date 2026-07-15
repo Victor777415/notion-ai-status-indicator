@@ -6,6 +6,7 @@ const tabUrls = new Map();
 const tabTitles = new Map();
 const tabWindows = new Map();
 const tabLastInputs = new Map();
+const tabLastReplies = new Map();
 const lastUpdateAt = new Map();
 const conversationTabs = new Set();
 const recentDoneAt = new Map();
@@ -272,6 +273,7 @@ let creating = null;
 			if (c.url) tabUrls.set(conversationId, c.url);
 			if (c.title) tabTitles.set(conversationId, c.title);
 			if (c.lastInput) tabLastInputs.set(conversationId, c.lastInput);
+			if (c.lastReply) tabLastReplies.set(conversationId, c.lastReply);
 			if (c.windowId != null) tabWindows.set(conversationId, c.windowId);
 			if (c.updatedAt) lastUpdateAt.set(conversationId, c.updatedAt);
 			if (c.state === STATES.DONE && c.updatedAt) recentDoneAt.set(conversationId, c.updatedAt);
@@ -387,6 +389,8 @@ function handleStateMessage(msg, sender) {
 	const canSyncPageMeta = isFallbackConversationId(conversationId) || actualConversationId === conversationId;
 
 	const lastInput = trimText(msg.lastInput || "", 80);
+	const hasLastReply = Object.prototype.hasOwnProperty.call(msg, "lastReply");
+	const lastReply = trimText(msg.lastReply || "", 240);
 
 	if (shouldRecordConversation) {
 		const isNewConversation = !conversationTabs.has(conversationId);
@@ -410,6 +414,10 @@ function handleStateMessage(msg, sender) {
 			}
 		}
 		if (lastInput) tabLastInputs.set(conversationId, lastInput);
+		if (hasLastReply) {
+			if (lastReply) tabLastReplies.set(conversationId, lastReply);
+			else if (msg.state === STATES.THINKING) tabLastReplies.delete(conversationId);
+		}
 		if (sender.tab && sender.tab.windowId != null) tabWindows.set(conversationId, sender.tab.windowId);
 		console.log("[NAI-BG] 建档/更新记录", isNewConversation ? "new" : "update", "tab", tabId, "conversation", conversationId, "state", snapshotState);
 	}
@@ -553,6 +561,7 @@ function syncStore() {
 			url: tabUrls.get(conversationId) || "",
 			title: tabTitles.get(conversationId) || "",
 			lastInput: tabLastInputs.get(conversationId) || "",
+			lastReply: tabLastReplies.get(conversationId) || "",
 			windowId: tabWindows.has(conversationId) ? tabWindows.get(conversationId) : null,
 			updatedAt,
 			lastUpdateAt: updatedAt,
@@ -653,6 +662,7 @@ function clearTabState(tabId, options = {}) {
 		tabTitles.delete(conversationId);
 		tabWindows.delete(conversationId);
 		tabLastInputs.delete(conversationId);
+		tabLastReplies.delete(conversationId);
 		lastUpdateAt.delete(conversationId);
 		conversationTabs.delete(conversationId);
 		recentDoneAt.delete(conversationId);
@@ -743,6 +753,7 @@ function buildSnapshot() {
 			url: tabUrls.get(conversationId) || "",
 			title: tabTitles.get(conversationId) || "",
 			lastInput: tabLastInputs.get(conversationId) || "",
+			lastReply: tabLastReplies.get(conversationId) || "",
 			windowId: tabWindows.has(conversationId) ? tabWindows.get(conversationId) : null,
 			updatedAt,
 			lastUpdateAt: updatedAt,
@@ -839,6 +850,7 @@ function markConversationRead(conversationId, options = {}) {
 	tabTitles.delete(conversationId);
 	tabWindows.delete(conversationId);
 	tabLastInputs.delete(conversationId);
+	tabLastReplies.delete(conversationId);
 	lastUpdateAt.delete(conversationId);
 	conversationTabs.delete(conversationId);
 	recentDoneAt.delete(conversationId);

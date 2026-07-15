@@ -80,11 +80,11 @@ function computeSize(cardCount, showArrow, showBadge) {
 	const petH = 56;
 	const petW = 56;
 	const gap = 8;
-	const arrowH = showArrow ? 20 + gap : 0;
 	const badgeH = showBadge ? 20 + gap : 0;
-	const cardH = cardCount > 0 ? cardCount * 54 + (cardCount - 1) * gap + gap : 0;
-	const w = cardCount > 0 ? 280 : petW;
-	const h = petH + arrowH + badgeH + cardH;
+	const cardH = cardCount > 0 ? cardCount * 64 + (cardCount - 1) * gap + gap : 0;
+	const arrowReserve = showArrow ? 28 : 0;
+	const w = cardCount > 0 ? 280 : Math.max(petW, petW + arrowReserve);
+	const h = petH + badgeH + cardH;
 	return { width: Math.max(petW, w), height: Math.max(petH, h) };
 }
 
@@ -134,7 +134,7 @@ function render() {
 
 		const sub = document.createElement("div");
 		sub.className = "card-sub";
-		sub.textContent = truncate(c.lastInput || "", 20);
+		sub.textContent = truncate(replyPreview(c), 42);
 
 		main.appendChild(title);
 		main.appendChild(sub);
@@ -149,6 +149,13 @@ function render() {
 	}
 
 	updateWindowSize();
+}
+
+function replyPreview(c) {
+	const reply = String(c && c.lastReply ? c.lastReply : "").trim();
+	if (reply) return reply;
+	if (c && isRunning(c.state)) return "正在生成回复…";
+	return "回复内容不可用";
 }
 
 function onPetClick() {

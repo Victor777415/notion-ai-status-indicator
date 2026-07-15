@@ -63,6 +63,7 @@
                 doneGraceTimer: null,
                 idleFallbackTimer: null,
                 lastInput: "",
+                lastReply: "",
                 activeStreams: new Set(),
             };
             conversations.set(key, c);
@@ -103,6 +104,7 @@
                 conversationId,
                 pageConversationId: conversationIdFromUrl(),
                 lastInput: ensureConversation(key).lastInput || "",
+                lastReply: ensureConversation(key).lastReply || "",
                 at: Date.now(),
             }, meta));
         } catch (e) {
@@ -182,6 +184,8 @@
         const key = conversationKey(d.conversationId || d.pageConversationId || conversationIdFromUrl());
         const c = ensureConversation(key);
         if (typeof d.lastInput === "string") c.lastInput = d.lastInput;
+        if (reqId && d.state === STATES.THINKING) c.lastReply = "";
+        if (typeof d.lastReply === "string" && d.lastReply) c.lastReply = d.lastReply;
         if (reqId && d.state === STATES.THINKING) {
             onStreamOpen(key, reqId);
             return;
@@ -263,6 +267,10 @@
         if (typeof d.lastInput === "string") {
             const key = conversationKey(d.conversationId || d.pageConversationId || conversationIdFromUrl());
             ensureConversation(key).lastInput = d.lastInput;
+        }
+        if (typeof d.lastReply === "string" && d.lastReply) {
+            const key = conversationKey(d.conversationId || d.pageConversationId || conversationIdFromUrl());
+            ensureConversation(key).lastReply = d.lastReply;
         }
         if (!isKnownState(d.state)) return;
         if (d.reqId) {

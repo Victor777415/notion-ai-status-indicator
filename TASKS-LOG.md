@@ -229,3 +229,29 @@
 	- F: T-009 stream lifecycle and T-011 first-card pipeline regression simulations passed.
 - Remaining:
 	- Manual runtime acceptance recommended: start a task, leave its tab on Marketplace before completion, and confirm the finished card keeps the AI conversation title while still clicking back to the conversation.
+
+## T-012
+- Date: 2026-07-14 (Asia/Shanghai)
+- Commit:
+	- this commit — redesign conversation card rendering
+- Changes:
+	- desktop/renderer/renderer.js: Card subtitles now render `lastReply` instead of `lastInput`. Running cards with no reply show `正在生成回复…`; completed cards with no reply show `回复内容不可用`. Window sizing no longer allocates vertical space for the collapse arrow, while keeping the 56px pet body unchanged.
+	- desktop/renderer/styles.css: Reworked cards into independent opaque white cards with a thin border, 16px radius, stable two-line height, and slight hover fill. Removed card/pet/collapse/badge shadows and backdrop filters. Moved the collapse control to an absolute pet top-right overlay; collapsed badge remains above the pet. Dark mode now uses solid colors.
+	- src/content/interceptor.js: Added incremental clone-stream decoding with TextDecoder, SSE/JSON-line parsing, display-text whitelisting, and per-request `lastReply` accumulation capped at 240 characters. Unparseable chunks are skipped silently, raw protocol/JSON text is never displayed, and the original response stream remains untouched.
+	- src/content/content.js: Tracks `lastReply` per conversationId, clears it only when a new request starts, forwards non-empty reply updates through `NAI_STATE`, and preserves replay-buffer behavior without mixing conversations.
+	- src/background/service-worker.js: Stores, hydrates, clears, and snapshots `lastReply` per conversationId while keeping `lastInput`, state, read, focus, notification, and badge semantics unchanged.
+- Reply parsing strategy:
+	- The detector only reads `response.clone().body`, buffers split lines, parses SSE `data:` JSON or JSON chunks, and extracts strings from known AI text fields such as `text`, `plainText`, `content`, `markdown`, `delta`, `answer`, and `message`. IDs, URLs, status/type/role metadata, and unparseable protocol text are ignored.
+- Self test:
+	- `node --check desktop/renderer/renderer.js` passed.
+	- `node --check src/content/interceptor.js` passed.
+	- `node --check src/content/content.js` passed.
+	- `node --check src/background/service-worker.js` passed.
+	- `/tmp/t012-test.mjs` passed: reply increment parsing/accumulation, split chunk buffering, per-conversation isolation, new request reply clearing, unparseable chunk fallback copy, renderer no-`lastInput` subtitle path, conversation card click target, and collapse overlay/no-shadow CSS assertions all passed.
+	- T-009 stream lifecycle simulation passed after the content changes.
+	- T-010 conversation identity/title sync simulation passed.
+	- T-011 first-card pipeline simulation passed.
+	- Focus navigation and title-contamination regression simulations passed.
+	- `cd desktop && npm start` launched Electron successfully; with no extension WS client it logged `[NAI-PET] pet hidden disconnected` and was stopped with SIGINT after startup.
+- Remaining:
+	- Manual runtime acceptance still recommended in real Notion/Electron: verify live reply preview updates during generation, completed cards retain the final preview, collapse control sits on the pet top-right, and multiple concurrent conversations do not mix reply text.
