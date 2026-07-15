@@ -268,3 +268,19 @@
 	- `cd desktop && npm start` launched Electron successfully; with no extension WS client it logged `[NAI-PET] pet hidden disconnected` and was stopped with SIGINT after startup.
 - Remaining:
 	- Manual runtime acceptance recommended for final visual comparison against Codex: expanded card list should show the shallow gray circular chevron at the pet top-right, and collapsed badge/expand interaction should remain unchanged.
+
+## T-012c
+- Date: 2026-07-15 (Asia/Shanghai)
+- Commit:
+	- this commit — collapse chevron visibility and placement
+- Actual root cause:
+	- Confirmed: T-012b added `display: flex` to `.collapse`, which overrode the browser default `[hidden] { display: none; }`, so the collapse button stayed visible with no cards. The absolute placement `bottom: 40px` also made the 24px button overlap the 56px pet area.
+- Changes:
+	- desktop/renderer/styles.css: Added `.collapse[hidden] { display: none !important; }`, removed absolute positioning from `.collapse`, and restored it to normal vertical flex flow with `align-self: flex-end`. The 24px solid gray circle, colors, hover, and dark-mode rules are unchanged.
+	- desktop/renderer/renderer.js: `computeSize()` now reserves 32px of height for the expanded-state arrow instead of extra width, matching the flex-flow placement between cards and the pet.
+- Self test:
+	- `node --check desktop/renderer/renderer.js` passed.
+	- `/tmp/t012c-test.mjs` passed: hidden collapse override, no absolute/right/bottom positioning, flex-end placement, arrow height reservation, no arrow width reservation, unchanged visibility conditions, collapse/badge handlers, T-012 reply preview, T-012 no-shadow/no-backdrop cards, and T-012b SVG/gray-circle styling were all asserted.
+	- `cd desktop && npm start` launched Electron successfully; with no extension WS client it logged `[NAI-PET] pet hidden disconnected` and was stopped with SIGINT after startup.
+- Remaining:
+	- Manual runtime acceptance recommended: with no conversations only the pet should show; with expanded cards the chevron should sit between the card list and pet, right-aligned, without covering the pet.

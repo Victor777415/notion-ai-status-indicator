@@ -81,10 +81,10 @@ function computeSize(cardCount, showArrow, showBadge) {
 	const petW = 56;
 	const gap = 8;
 	const badgeH = showBadge ? 20 + gap : 0;
+	const arrowH = showArrow ? 24 + gap : 0;
 	const cardH = cardCount > 0 ? cardCount * 64 + (cardCount - 1) * gap + gap : 0;
-	const arrowReserve = showArrow ? 28 : 0;
-	const w = cardCount > 0 ? 280 : Math.max(petW, petW + arrowReserve);
-	const h = petH + badgeH + cardH;
+	const w = cardCount > 0 ? 280 : petW;
+	const h = petH + badgeH + arrowH + cardH;
 	return { width: Math.max(petW, w), height: Math.max(petH, h) };
 }
 

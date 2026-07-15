@@ -128,9 +128,7 @@ html, body {
 @keyframes rot { to { transform: rotate(360deg); } }
 
 .collapse {
-	position: absolute;
-	right: 0;
-	bottom: 40px;
+	align-self: flex-end;
 	width: 24px;
 	height: 24px;
 	min-width: 24px;
@@ -143,6 +141,10 @@ html, body {
 	display: flex;
 	align-items: center;
 	justify-content: center;
+}
+
+.collapse[hidden] {
+	display: none !important;
 }
 
 .collapse:hover {
