@@ -113,6 +113,7 @@ function createWindow() {
 		backgroundColor: "#00000000",
 		webPreferences: {
 			preload: path.join(__dirname, "preload.js"),
+			sandbox: false,
 			contextIsolation: true,
 			nodeIntegration: false,
 		},
@@ -123,6 +124,9 @@ function createWindow() {
 	mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
 	mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
+	mainWindow.webContents.on("console-message", (_event, _level, message, line, sourceId) => {
+		console.log("[NAI-RENDER]", message, `${sourceId || "renderer"}:${line || 0}`);
+	});
 
 	mainWindow.webContents.on("did-finish-load", () => {
 		mainWindow.webContents.send("nai:snapshot", lastSnapshot);
@@ -155,6 +159,7 @@ function createPlaneWindow() {
 		show: false,
 		webPreferences: {
 			preload: path.join(__dirname, "preload.js"),
+			sandbox: false,
 			contextIsolation: true,
 			nodeIntegration: false,
 		},

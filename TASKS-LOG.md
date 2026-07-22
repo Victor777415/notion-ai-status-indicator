@@ -383,3 +383,27 @@
 	- `npm start` could not run: the desktop execution approval service rejected GUI launch with HTTP 403 before Electron started. No workaround was attempted.
 - Remaining:
 	- Manual whole-machine acceptance remains for idle animation, dragging, and cards because the local GUI launch is blocked by environment approval.
+
+## T-013e
+- Date: 2026-07-22 (Asia/Shanghai)
+- Commit:
+	- this commit — untaint sprite pipeline and console forwarding
+- Actual root cause:
+	- The runtime evidence did not support the originally suspected `file://` canvas-taint path. `npm start` exposed the real earlier failure: Electron's sandboxed preload could not load Node's `fs` module (`Unable to load preload script` / `module not found: fs`). As a result `naiBridge` was never created and renderer startup then failed at `onSnapshot`, so the sprite key/outline pipeline could not run at all.
+- Changes:
+	- desktop/main.js: For both transparent windows that use the existing Node-backed preload, set `sandbox: false` while retaining `contextIsolation: true` and `nodeIntegration: false`. Added permanent `webContents` `console-message` forwarding to stdout with the `[NAI-RENDER]` prefix.
+	- desktop/preload.js: Added `readFrameDataUrl(relPath)`. It resolves requested frames from the renderer root, verifies the real path remains within `assets/pet/frames`, permits only PNG files, rejects traversal/absolute paths, and returns `data:image/png;base64,...` from `fs`.
+	- desktop/renderer/renderer.js: `loadKeyedSprite` now loads the preload-supplied data URL into `Image` before Canvas keying/outline processing, removing `file://` pixel-read risk. The entire `setSpriteFrame` chain now logs `[NAI-PET] sprite pipeline failed` with details and falls back to the raw frame path rather than silently leaving a stale frame. Existing frame/map error logs and animation state logic remain unchanged.
+- Sprite alpha inspection:
+	- `desktop/renderer/assets/pet/frames/idle_00.png`: 192x192; alpha=0 ratio 68.5547%; corner alpha values `[0, 0, 0, 0]`. Frames are already keyed, so the rekey script was not rerun and no PNG assets changed.
+- Runtime evidence (`cd desktop && npm start`):
+	- `[NAI-RENDER] [NAI-PET] sprite keyed assets/pet/frames/idle_00.png opaque=11572 outlinePx=1416`
+	- `[NAI-RENDER] [NAI-PET] sprite keyed assets/pet/frames/idle_01.png opaque=11575 outlinePx=1418`
+	- `[NAI-RENDER] [NAI-PET] sprite keyed assets/pet/frames/idle_02.png opaque=11560 outlinePx=1429`
+	- The renderer no longer emitted preload `fs` or missing `naiBridge` errors. The only remaining terminal line was Electron's existing CSP development warning, which is unrelated to the sprite pipeline.
+- Self test:
+	- Preload whitelist test passed: an allowed frame returned a PNG data URL; traversal and non-frame requests were rejected.
+	- `node --check` passed for `desktop/main.js`, `desktop/preload.js`, and `desktop/renderer/renderer.js`; `git diff --check` passed.
+	- Electron smoke test passed to idle animation frame processing, with permanent console forwarding proving Canvas keying and 2px outline generation execute at runtime.
+- Remaining:
+	- Manual whole-machine verification is still appropriate for pet visibility, dragging, cards, and plane interactions with a real extension client connected.

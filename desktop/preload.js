@@ -3,6 +3,8 @@
 const { contextBridge, ipcRenderer } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const RENDERER_ROOT = path.resolve(__dirname, "renderer");
+const PET_FRAMES_ROOT = fs.realpathSync(path.join(RENDERER_ROOT, "assets", "pet", "frames"));
 
 function loadPetSpriteMap() {
 	try {
@@ -11,6 +13,19 @@ function loadPetSpriteMap() {
 	} catch (e) {
 		return null;
 	}
+}
+
+function readFrameDataUrl(relPath) {
+	if (typeof relPath !== "string" || !relPath || relPath.includes("\0") || path.isAbsolute(relPath)) {
+		throw new Error("Invalid sprite frame path");
+	}
+	const candidate = path.resolve(RENDERER_ROOT, relPath);
+	const target = fs.realpathSync(candidate);
+	const relative = path.relative(PET_FRAMES_ROOT, target);
+	if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || path.extname(target).toLowerCase() !== ".png") {
+		throw new Error("Sprite frame path is outside the allowed PNG directory");
+	}
+	return `data:image/png;base64,${fs.readFileSync(target).toString("base64")}`;
 }
 
 contextBridge.exposeInMainWorld("naiBridge", {
@@ -23,6 +38,7 @@ contextBridge.exposeInMainWorld("naiBridge", {
 	onPlaneClear: (cb) => ipcRenderer.on("nai:plane-clear", () => cb()),
 	onPlaneIgnore: (cb) => ipcRenderer.on("nai:plane-ignore", (_e, data) => cb(data)),
 	loadPetSpriteMap,
+	readFrameDataUrl,
 	openNotion: (payload) => ipcRenderer.send("pet:open-notion", payload),
 	resize: (payload) => ipcRenderer.send("pet:resize", payload),
 	dragStart: (payload) => ipcRenderer.send("pet:drag-start", payload),

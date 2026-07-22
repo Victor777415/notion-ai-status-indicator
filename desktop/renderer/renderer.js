@@ -188,7 +188,15 @@ function loadKeyedSprite(relPath) {
 	if (spriteFrameDataUrls.has(relPath)) return Promise.resolve(spriteFrameDataUrls.get(relPath));
 	if (spriteFrameLoads.has(relPath)) return spriteFrameLoads.get(relPath);
 
-	const source = `./${relPath}`;
+	let source;
+	try {
+		if (!window.naiBridge || typeof window.naiBridge.readFrameDataUrl !== "function") {
+			throw new Error("sprite frame data bridge unavailable");
+		}
+		source = window.naiBridge.readFrameDataUrl(relPath);
+	} catch (error) {
+		return Promise.reject(error);
+	}
 	const load = new Promise((resolve, reject) => {
 		const image = new Image();
 		image.onload = () => {
@@ -225,7 +233,12 @@ function setSpriteFrame(relPath) {
 			if (request !== spriteFrameRequest || petSpriteEl.getAttribute("src") === dataUrl) return;
 			petSpriteEl.setAttribute("src", dataUrl);
 		})
-		.catch(() => console.warn("[NAI-PET] sprite frame failed", `./${relPath}`));
+		.catch((error) => {
+			if (request !== spriteFrameRequest) return;
+			console.warn("[NAI-PET] sprite pipeline failed", relPath, error && (error.stack || error.message || String(error)));
+			const fallback = `./${relPath}`;
+			if (petSpriteEl.getAttribute("src") !== fallback) petSpriteEl.setAttribute("src", fallback);
+		});
 }
 
 function clearSpriteTimers() {
