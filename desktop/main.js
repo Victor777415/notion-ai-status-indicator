@@ -10,6 +10,8 @@ const HEARTBEAT_MS = 20000;
 const HIDE_NO_NOTION_MS = 5000;
 const HIDE_DISCONNECTED_MS = 10000;
 const DEFAULT_MARGIN = 24;
+const PET_SIZE = 56;
+const WORK_AREA_MARGIN = 8;
 let POSITION_FILE = null;
 
 let mainWindow = null;
@@ -69,17 +71,39 @@ function savePositionFromWindow() {
 	} catch (e) {}
 }
 
-function clampToVisibleWorkArea(x, y, width, height) {
-	// 至少保留一部分窗口在主显示器工作区内，避免完全跑出屏幕。
-	const wa = getPrimaryWorkArea();
-	const minX = wa.x - width + 40;
-	const maxX = wa.x + wa.width - 40;
-	const minY = wa.y - height + 40;
-	const maxY = wa.y + wa.height - 40;
+function normalizeLayout(layout) {
 	return {
-		x: clamp(x, minX, maxX),
-		y: clamp(y, minY, maxY),
+		horizontal: layout && layout.horizontal === "start" ? "start" : "end",
+		vertical: layout && layout.vertical === "top" ? "top" : "bottom",
 	};
+}
+
+function petOffset(width, height, layout) {
+	const normalized = normalizeLayout(layout);
+	return {
+		x: normalized.horizontal === "start" ? 0 : Math.max(0, width - PET_SIZE),
+		y: normalized.vertical === "top" ? 0 : Math.max(0, height - PET_SIZE),
+	};
+}
+
+function workAreaForPet(x, y) {
+	const display = screen.getDisplayNearestPoint({ x: x + PET_SIZE / 2, y: y + PET_SIZE / 2 });
+	return display && display.workArea ? display.workArea : getPrimaryWorkArea();
+}
+
+function clampToVisibleWorkArea(x, y, width, height, layout) {
+	const offset = petOffset(width, height, layout);
+	const wa = workAreaForPet(x + offset.x, y + offset.y);
+	const maxPetX = Math.max(wa.x + WORK_AREA_MARGIN, wa.x + wa.width - PET_SIZE - WORK_AREA_MARGIN);
+	const maxPetY = Math.max(wa.y + WORK_AREA_MARGIN, wa.y + wa.height - PET_SIZE - WORK_AREA_MARGIN);
+	const petX = clamp(x + offset.x, wa.x + WORK_AREA_MARGIN, maxPetX);
+	const petY = clamp(y + offset.y, wa.y + WORK_AREA_MARGIN, maxPetY);
+	let nextX = petX - offset.x;
+	let nextY = petY - offset.y;
+
+	// The renderer immediately flips cards around a pet near an edge. Until that
+	// rAF update arrives, prioritize the pet click target over temporarily fitting cards.
+	return { x: nextX, y: nextY };
 }
 
 function defaultBottomRightPosition(width, height) {
@@ -99,8 +123,8 @@ function createWindow() {
 	pos = clampToVisibleWorkArea(pos.x, pos.y, width, height);
 
 	mainWindow = new BrowserWindow({
-		width,
-		height,
+		width: PET_SIZE,
+		height: PET_SIZE,
 		x: pos.x,
 		y: pos.y,
 		frame: false,
@@ -138,6 +162,14 @@ function createWindow() {
 	mainWindow.on("closed", () => {
 		mainWindow = null;
 	});
+}
+
+function layoutContext() {
+	if (!mainWindow) return null;
+	const bounds = mainWindow.getBounds();
+	const display = screen.getDisplayMatching(bounds);
+	const workArea = display && display.workArea ? display.workArea : getPrimaryWorkArea();
+	return { bounds, workArea };
 }
 
 function createPlaneWindow() {
@@ -496,18 +528,16 @@ ipcMain.on("pet:resize", (_ev, payload) => {
 	const w = Math.max(56, Math.round(Number(payload.width) || 56));
 	const h = Math.max(56, Math.round(Number(payload.height) || 56));
 
-	const b = mainWindow.getBounds();
-	const anchor = lastBounds || b;
-
-	// 右下角锚定：右下角不动，向上向左扩展。
-	const right = anchor.x + anchor.width;
-	const bottom = anchor.y + anchor.height;
-	let x = right - w;
-	let y = bottom - h;
-
-	const clamped = clampToVisibleWorkArea(x, y, w, h);
-	x = clamped.x;
-	y = clamped.y;
+	const layout = normalizeLayout(payload.layout);
+	const current = mainWindow.getBounds();
+	const currentOffset = petOffset(current.width, current.height, layout);
+	const pet = payload.pet && Number.isFinite(payload.pet.x) && Number.isFinite(payload.pet.y)
+		? payload.pet
+		: { x: current.x + currentOffset.x, y: current.y + currentOffset.y };
+	const offset = petOffset(w, h, layout);
+	const clamped = clampToVisibleWorkArea(pet.x - offset.x, pet.y - offset.y, w, h, layout);
+	const x = clamped.x;
+	const y = clamped.y;
 
 	mainWindow.setBounds({ x, y, width: w, height: h }, false);
 	lastBounds = { x, y, width: w, height: h };
@@ -522,6 +552,7 @@ ipcMain.on("pet:drag-start", (_ev, payload) => {
 			y: Number(payload && payload.screenY) || screen.getCursorScreenPoint().y,
 		},
 		startBounds: mainWindow.getBounds(),
+		layout: normalizeLayout(payload && payload.layout),
 	};
 });
 
@@ -539,6 +570,7 @@ ipcMain.on("pet:move", (_ev, payload) => {
 		dragState.startBounds.y + dy,
 		dragState.startBounds.width,
 		dragState.startBounds.height,
+		dragState.layout,
 	);
 	mainWindow.setPosition(Math.round(next.x), Math.round(next.y), false);
 	lastBounds = mainWindow.getBounds();
@@ -548,6 +580,8 @@ ipcMain.on("pet:drag-end", () => {
 	dragState = null;
 	savePositionFromWindow();
 });
+
+ipcMain.handle("pet:get-layout-context", () => layoutContext());
 
 ipcMain.on("pet:show-menu", () => {
 	const menu = Menu.buildFromTemplate([

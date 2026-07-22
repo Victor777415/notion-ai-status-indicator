@@ -1,12 +1,15 @@
 "use strict";
 
 const petEl = document.getElementById("pet");
+const appEl = document.getElementById("app");
 const cardsEl = document.getElementById("cards");
 const collapseEl = document.getElementById("collapse");
 const badgeEl = document.getElementById("badge");
 const petSpriteEl = document.getElementById("pet-sprite");
 
 const DRAG_THRESHOLD_PX = 4;
+const PET_SIZE = 56;
+const LAYOUT_MARGIN = 8;
 
 const RANK = { thinking: 0, responding: 0, done: 1, idle: 2 };
 
@@ -45,6 +48,9 @@ const queuedThrowKeys = new Set();
 const spriteFrameDataUrls = new Map();
 const spriteFrameLoads = new Map();
 let spriteFrameRequest = 0;
+let layoutState = { below: false, horizontal: "end" };
+let layoutFrame = 0;
+let layoutRequest = 0;
 
 function loadSpriteMap() {
 	try {
@@ -474,8 +480,8 @@ function sorted(list) {
 }
 
 function computeSize(cardCount, showArrow, showBadge) {
-	const petH = 56;
-	const petW = 56;
+	const petH = PET_SIZE;
+	const petW = PET_SIZE;
 	const gap = 8;
 	const badgeH = showBadge ? 20 + gap : 0;
 	const arrowH = showArrow ? 24 + gap : 0;
@@ -485,12 +491,70 @@ function computeSize(cardCount, showArrow, showBadge) {
 	return { width: Math.max(petW, w), height: Math.max(petH, h) };
 }
 
+function layoutPayload() {
+	return {
+		horizontal: layoutState.horizontal,
+		vertical: layoutState.below ? "top" : "bottom",
+	};
+}
+
+function petBoundsForContext(context, layout = layoutState) {
+	const { bounds } = context;
+	return {
+		x: bounds.x + (layout.horizontal === "start" ? 0 : Math.max(0, bounds.width - PET_SIZE)),
+		y: bounds.y + (layout.below ? 0 : Math.max(0, bounds.height - PET_SIZE)),
+	};
+}
+
+function nextLayout(context, size) {
+	if (!context || !context.bounds || !context.workArea) return layoutState;
+	const pet = petBoundsForContext(context);
+	const wa = context.workArea;
+	const right = wa.x + wa.width;
+	const bottom = wa.y + wa.height;
+	let horizontal = layoutState.horizontal;
+	let below = layoutState.below;
+
+	if (pet.x - (size.width - PET_SIZE) < wa.x + LAYOUT_MARGIN) horizontal = "start";
+	else if (pet.x + size.width > right - LAYOUT_MARGIN) horizontal = "end";
+
+	if (pet.y - (size.height - PET_SIZE) < wa.y + LAYOUT_MARGIN) below = true;
+	else if (pet.y + size.height > bottom - LAYOUT_MARGIN) below = false;
+
+	return { below, horizontal };
+}
+
+function applyLayout(next) {
+	layoutState = next;
+	appEl.classList.toggle("layout-cards-below", next.below);
+	appEl.classList.toggle("layout-align-start", next.horizontal === "start");
+	appEl.classList.toggle("layout-align-end", next.horizontal === "end");
+}
+
+function scheduleLayoutResize() {
+	if (layoutFrame) return;
+	layoutFrame = requestAnimationFrame(() => {
+		layoutFrame = 0;
+		const list = visibleCards(snapshot);
+		const size = computeSize(collapsed ? 0 : list.length, !collapsed && list.length > 0, collapsed && list.length > 0);
+		const request = ++layoutRequest;
+		if (!window.naiBridge || typeof window.naiBridge.getLayoutContext !== "function") {
+			window.naiBridge.resize({ ...size, layout: layoutPayload() });
+			return;
+		}
+		window.naiBridge.getLayoutContext()
+			.then((context) => {
+				if (request !== layoutRequest) return;
+				const pet = context ? petBoundsForContext(context) : null;
+				applyLayout(nextLayout(context, size));
+				window.naiBridge.resize({ ...size, layout: layoutPayload(), pet });
+			})
+			.catch(() => window.naiBridge.resize({ ...size, layout: layoutPayload() }));
+	});
+}
+
 function updateWindowSize() {
-	const list = visibleCards(snapshot);
-	const showArrow = !collapsed && list.length > 0;
-	const showBadge = collapsed && list.length > 0;
-	const cardCount = collapsed ? 0 : list.length;
-	window.naiBridge.resize(computeSize(cardCount, showArrow, showBadge));
+	scheduleLayoutResize();
 }
 
 function render() {
@@ -572,7 +636,7 @@ petEl.addEventListener("mousedown", (e) => {
 		moved: false,
 		movingWindow: false,
 	};
-	window.naiBridge.dragStart({ screenX: e.screenX, screenY: e.screenY });
+	window.naiBridge.dragStart({ screenX: e.screenX, screenY: e.screenY, layout: layoutPayload() });
 	e.preventDefault();
 });
 
@@ -594,6 +658,7 @@ window.addEventListener("mousemove", (e) => {
 		spriteDragging = true;
 		petEl.classList.add("is-dragging");
 		window.naiBridge.move({ screenX: e.screenX, screenY: e.screenY });
+		scheduleLayoutResize();
 	}
 });
 
@@ -605,6 +670,7 @@ window.addEventListener("mouseup", (e) => {
 	spriteDragging = false;
 	petEl.classList.remove("is-dragging");
 	window.naiBridge.dragEnd();
+	scheduleLayoutResize();
 	if (wasClick && !movedWindow) onPetClick();
 });
 

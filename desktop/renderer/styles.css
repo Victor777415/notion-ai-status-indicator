@@ -23,6 +23,28 @@ html, body {
 	background: transparent;
 }
 
+#app.layout-cards-below {
+	flex-direction: column-reverse;
+}
+
+#app.layout-align-start {
+	align-items: flex-start;
+}
+
+#app.layout-align-end {
+	align-items: flex-end;
+}
+
+#app.layout-align-start .collapse,
+#app.layout-align-start .badge {
+	align-self: flex-start;
+}
+
+#app.layout-align-end .collapse,
+#app.layout-align-end .badge {
+	align-self: flex-end;
+}
+
 .pet {
 	width: 56px;
 	height: 56px;

@@ -407,3 +407,21 @@
 	- Electron smoke test passed to idle animation frame processing, with permanent console forwarding proving Canvas keying and 2px outline generation execute at runtime.
 - Remaining:
 	- Manual whole-machine verification is still appropriate for pet visibility, dragging, cards, and plane interactions with a real extension client connected.
+
+## T-014
+- Date: 2026-07-22 (Asia/Shanghai)
+- Commit:
+	- this commit — edge-aware card layout clamp
+- Changes:
+	- desktop/main.js: Added pet-anchor-aware bounds clamping. The 56px pet target is always clamped within the selected display work area with an 8px margin, including during drag. Resize now receives the renderer's current pet anchor and target card layout, preserves the pet position while changing window size, and prioritizes the pet when a card list temporarily cannot fit. Added read-only `pet:get-layout-context` IPC with the current window bounds and work area.
+	- desktop/preload.js: Exposed the read-only `getLayoutContext` bridge.
+	- desktop/renderer/renderer.js: Added rAF-coalesced edge layout recalculation on card resize, snapshot updates, drag moves, and drag end. It selects cards below the pet when above would cross the top edge, and chooses start/end alignment based on available horizontal card space. Resizes now include the current pet screen anchor and layout intent.
+	- desktop/renderer/styles.css: Added `layout-cards-below`, `layout-align-start`, and `layout-align-end` classes. Reversed vertical flex order moves cards/arrow/badge below the pet; alignment rules move the controls with the selected card edge without covering the pet.
+- Self test:
+	- Main-process work-area clamp simulation passed for left, right, top, and bottom edges. Each case retained the full 56px pet within the 8px work-area margin.
+	- Renderer layout simulation passed: left edge switches to start alignment, right edge switches to end alignment, top edge switches cards below, and bottom edge switches cards above.
+	- CSS/IPC assertions passed for the three layout classes and `getLayoutContext` bridge.
+	- `node --check` passed for `desktop/main.js`, `desktop/preload.js`, and `desktop/renderer/renderer.js`; `git diff --check` passed.
+	- `cd desktop && npm start` passed. Renderer emitted normal keyed idle/wait frame logs and no preload, IPC, layout, or renderer errors; the test process was stopped afterward.
+- Remaining:
+	- Manual whole-machine acceptance is still appropriate: drag the pet to all four corners with both expanded and collapsed cards, confirming titles stay visible and the pet remains clickable.

@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("naiBridge", {
 	onPlaneIgnore: (cb) => ipcRenderer.on("nai:plane-ignore", (_e, data) => cb(data)),
 	loadPetSpriteMap,
 	readFrameDataUrl,
+	getLayoutContext: () => ipcRenderer.invoke("pet:get-layout-context"),
 	openNotion: (payload) => ipcRenderer.send("pet:open-notion", payload),
 	resize: (payload) => ipcRenderer.send("pet:resize", payload),
 	dragStart: (payload) => ipcRenderer.send("pet:drag-start", payload),
