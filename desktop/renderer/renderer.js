@@ -10,6 +10,7 @@ const petSpriteEl = document.getElementById("pet-sprite");
 const DRAG_THRESHOLD_PX = 4;
 const PET_SIZE = 56;
 const LAYOUT_MARGIN = 8;
+const HIT_ALPHA_THRESHOLD = 16;
 
 const RANK = { thinking: 0, responding: 0, done: 1, idle: 2 };
 
@@ -47,7 +48,11 @@ const throwQueue = [];
 const queuedThrowKeys = new Set();
 const spriteFrameDataUrls = new Map();
 const spriteFrameLoads = new Map();
+const spriteFrameMasks = new Map();
 let spriteFrameRequest = 0;
+let currentSpriteMask = null;
+let petMouseIgnored = null;
+let lastPointer = null;
 let layoutState = { below: false, horizontal: "end" };
 let layoutFrame = 0;
 let layoutRequest = 0;
@@ -190,6 +195,14 @@ function outlineSprite(canvas, context) {
 	return { opaquePixels, outlinePixels };
 }
 
+function captureSpriteMask(canvas, context) {
+	const { width, height } = canvas;
+	const { data } = context.getImageData(0, 0, width, height);
+	const alpha = new Uint8Array(width * height);
+	for (let pixel = 0; pixel < alpha.length; pixel += 1) alpha[pixel] = data[pixel * 4 + 3];
+	return { width, height, alpha };
+}
+
 function loadKeyedSprite(relPath) {
 	if (spriteFrameDataUrls.has(relPath)) return Promise.resolve(spriteFrameDataUrls.get(relPath));
 	if (spriteFrameLoads.has(relPath)) return spriteFrameLoads.get(relPath);
@@ -216,6 +229,7 @@ function loadKeyedSprite(relPath) {
 				keySpriteBackground(canvas, context);
 				const { opaquePixels, outlinePixels } = outlineSprite(canvas, context);
 				console.info("[NAI-PET] sprite keyed", relPath, `opaque=${opaquePixels}`, `outlinePx=${outlinePixels}`);
+				spriteFrameMasks.set(relPath, captureSpriteMask(canvas, context));
 				const dataUrl = canvas.toDataURL("image/png");
 				spriteFrameDataUrls.set(relPath, dataUrl);
 				resolve(dataUrl);
@@ -237,14 +251,46 @@ function setSpriteFrame(relPath) {
 	loadKeyedSprite(relPath)
 		.then((dataUrl) => {
 			if (request !== spriteFrameRequest || petSpriteEl.getAttribute("src") === dataUrl) return;
+			currentSpriteMask = spriteFrameMasks.get(relPath) || null;
 			petSpriteEl.setAttribute("src", dataUrl);
+			updatePointerInteractivity(lastPointer);
 		})
 		.catch((error) => {
 			if (request !== spriteFrameRequest) return;
 			console.warn("[NAI-PET] sprite pipeline failed", relPath, error && (error.stack || error.message || String(error)));
+			currentSpriteMask = null;
 			const fallback = `./${relPath}`;
 			if (petSpriteEl.getAttribute("src") !== fallback) petSpriteEl.setAttribute("src", fallback);
+			updatePointerInteractivity(lastPointer);
 		});
+}
+
+function isOpaqueSpritePoint(mask, point, rect) {
+	if (!mask || !rect || !rect.width || !rect.height) return true;
+	const x = Math.floor((point.clientX - rect.left) * mask.width / rect.width);
+	const y = Math.floor((point.clientY - rect.top) * mask.height / rect.height);
+	if (x < 0 || x >= mask.width || y < 0 || y >= mask.height) return false;
+	return mask.alpha[y * mask.width + x] >= HIT_ALPHA_THRESHOLD;
+}
+
+function setPetMouseIgnore(ignore) {
+	if (petMouseIgnored === ignore || !window.naiBridge || typeof window.naiBridge.setIgnoreMouseEvents !== "function") return;
+	petMouseIgnored = ignore;
+	window.naiBridge.setIgnoreMouseEvents({ ignore });
+}
+
+function updatePointerInteractivity(point) {
+	if (!point) return;
+	lastPointer = { clientX: point.clientX, clientY: point.clientY };
+	const target = document.elementFromPoint(point.clientX, point.clientY);
+	const control = target && target.closest && target.closest(".card, #collapse, #badge");
+	const inPet = target && target.closest && target.closest("#pet");
+	const interactive = Boolean(control) || (Boolean(inPet) && isOpaqueSpritePoint(currentSpriteMask, point, petSpriteEl.getBoundingClientRect()));
+	if (drag) {
+		setPetMouseIgnore(false);
+		return;
+	}
+	setPetMouseIgnore(!interactive);
 }
 
 function clearSpriteTimers() {
@@ -434,6 +480,7 @@ function syncSnapshotTransitions(list) {
 function setSpriteVisible(visible) {
 	spriteVisible = Boolean(visible);
 	if (!spriteVisible) {
+		setPetMouseIgnore(true);
 		clearSpriteTimers();
 		activeThrow = null;
 		spriteDoneUntil = 0;
@@ -651,6 +698,7 @@ petEl.addEventListener("mouseleave", () => {
 });
 
 window.addEventListener("mousemove", (e) => {
+	updatePointerInteractivity(e);
 	if (!drag) return;
 	if (totalDragDistance(e) >= DRAG_THRESHOLD_PX) {
 		drag.moved = true;
@@ -660,6 +708,10 @@ window.addEventListener("mousemove", (e) => {
 		window.naiBridge.move({ screenX: e.screenX, screenY: e.screenY });
 		scheduleLayoutResize();
 	}
+});
+
+window.addEventListener("mouseout", (e) => {
+	if (!e.relatedTarget && !drag) setPetMouseIgnore(true);
 });
 
 window.addEventListener("mouseup", (e) => {

@@ -441,3 +441,18 @@
 	- `cd desktop && npm start` passed with normal keyed sprite logs and no new desktop errors; the test process was stopped afterward.
 - Remaining:
 	- Manual integrated acceptance remains: complete a conversation, click a landed plane, then separately click a card and test notification/manual read paths with multiple conversations.
+
+## T-016
+- Date: 2026-07-23 (Asia/Shanghai)
+- Commit:
+	- this commit — silhouette-only hit and occlusion
+- Changes:
+	- desktop/main.js: The transparent pet window now starts with `setIgnoreMouseEvents(true, { forward: true })`. Added a narrowly scoped `pet:set-ignore-mouse` IPC handler and drag-start override so transparent sprite pixels pass clicks through to the desktop while a cat-outline drag remains reliable.
+	- desktop/preload.js: Exposed `setIgnoreMouseEvents` for the renderer's alpha-hit decision.
+	- desktop/renderer/renderer.js: Captures the keyed-and-outlined frame alpha mask alongside the existing data-URL cache. Pointer hit testing uses alpha >=16 only inside the actual sprite bounds; transparent/out-of-bounds pixels request pass-through. Cards, the collapse button, and the count badge are explicit interactive exceptions. Pointer evaluation now runs for ordinary movement as well as drag movement, and hidden pets return to pass-through.
+- Self test:
+	- `node --check desktop/main.js`, `node --check desktop/preload.js`, and `node --check desktop/renderer/renderer.js` passed; `git diff --check` passed.
+	- Reproducible alpha-hit simulation passed: alpha 0 and 15 pass through; alpha 16 and 255 remain hit-testable. Static checks confirmed the transparent-window default, IPC bridge/handler, card/control exception selector, and non-drag pointer evaluation.
+	- `cd desktop && npm start` passed. Terminal output included `[NAI-RENDER] [NAI-PET] sprite keyed ... opaque=... outlinePx=...` for idle frames and no new renderer or IPC errors; Electron's existing development CSP warning remains unrelated.
+- Remaining:
+	- Manual whole-machine acceptance is required to verify OS-level pass-through over desktop text, opaque-cat dragging/clicking, and card/collapse/badge clickability on the user's display.

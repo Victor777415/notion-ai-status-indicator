@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld("naiBridge", {
 	dragStart: (payload) => ipcRenderer.send("pet:drag-start", payload),
 	move: (payload) => ipcRenderer.send("pet:move", payload),
 	dragEnd: () => ipcRenderer.send("pet:drag-end"),
+	setIgnoreMouseEvents: (payload) => ipcRenderer.send("pet:set-ignore-mouse", payload),
 	quit: () => ipcRenderer.send("pet:quit"),
 	showMenu: () => ipcRenderer.send("pet:show-menu"),
 	spawnPlane: (payload) => ipcRenderer.send("pet:spawn-plane", payload),

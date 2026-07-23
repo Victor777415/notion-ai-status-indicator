@@ -29,6 +29,7 @@ let planeWindow = null;
 let planeVisible = false;
 let planeReady = false;
 let planeSeq = 0;
+let petMouseIgnored = true;
 const activePlanes = new Map(); // planeId -> plane payload/meta
 const interactivePlanes = new Set();
 const pendingPlaneSpawns = [];
@@ -146,6 +147,7 @@ function createWindow() {
 	// 置顶到可悬浮在全屏应用之上的层级，并在所有桌面/空间可见。
 	mainWindow.setAlwaysOnTop(true, "screen-saver");
 	mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+	mainWindow.setIgnoreMouseEvents(true, { forward: true });
 
 	mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 	mainWindow.webContents.on("console-message", (_event, _level, message, line, sourceId) => {
@@ -162,6 +164,12 @@ function createWindow() {
 	mainWindow.on("closed", () => {
 		mainWindow = null;
 	});
+}
+
+function setPetMouseIgnored(ignore) {
+	if (!mainWindow || petMouseIgnored === ignore) return;
+	petMouseIgnored = ignore;
+	mainWindow.setIgnoreMouseEvents(ignore, { forward: true });
 }
 
 function layoutContext() {
@@ -566,6 +574,7 @@ ipcMain.on("pet:resize", (_ev, payload) => {
 
 ipcMain.on("pet:drag-start", (_ev, payload) => {
 	if (!mainWindow) return;
+	setPetMouseIgnored(false);
 	dragState = {
 		startScreen: {
 			x: Number(payload && payload.screenX) || screen.getCursorScreenPoint().x,
@@ -599,6 +608,12 @@ ipcMain.on("pet:move", (_ev, payload) => {
 ipcMain.on("pet:drag-end", () => {
 	dragState = null;
 	savePositionFromWindow();
+});
+
+ipcMain.on("pet:set-ignore-mouse", (_ev, payload) => {
+	const ignore = !payload || payload.ignore !== false;
+	if (ignore && dragState) return;
+	setPetMouseIgnored(ignore);
 });
 
 ipcMain.handle("pet:get-layout-context", () => layoutContext());
