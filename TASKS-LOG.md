@@ -485,3 +485,22 @@
 	- `cd desktop && npm start` passed. The terminal showed normal `[NAI-PET] sprite keyed ... opaque=... outlinePx=...` logs with no new startup or renderer errors. Electron's existing development CSP warning is unrelated.
 - Remaining:
 	- Manual whole-machine acceptance is required over desktop text: verify that no rectangular or rounded shadow plate remains, while the outlined cat, drag/click behavior, and card controls remain readable and interactive.
+
+## T-016c
+- Date: 2026-07-23 (Asia/Shanghai)
+- Commit:
+	- this commit — remove white plate from sprite frames
+- Root cause:
+	- The extracted sprite PNGs still retained an edge-connected near-white rounded backing plate. Removing CSS shadows in T-016b could not remove those opaque source pixels.
+- Changes:
+	- desktop/scripts/rekey-pet-frames.py: Tightened the deterministic edge-connected background key to RGB >=235 or max corner-color delta <=20.
+	- desktop/renderer/assets/pet/frames/*.png: Re-keyed all 36 pet and plane frames with the matching offline algorithm.
+	- desktop/renderer/renderer.js: Matched the runtime key to `235/20`. After keying, it verifies all frame corners; a residual corner emits `[NAI-PET] sprite plate residual` and gets one more aggressive edge-connected pass (`220/32`) before `outlineSprite` operates. Thus the outline can only follow the cleaned sprite entity, never a backing plate.
+- Alpha and visual QA:
+	- `idle_00.png` has four corner alpha values `[0, 0, 0, 0]` and `68.68%` alpha-zero pixels after re-keying. Every one of the 36 frames is 192x192 and has all four corners fully transparent.
+	- Composited the processed `idle_00` over `/tmp/t016c-dark.png` (`#1a1a1a`) and `/tmp/t016c-light.png` (`#f0f0f0`). Visual inspection shows only the cat silhouette and its dark pixel outline, with no white rectangular or rounded backing plate.
+- Self test:
+	- `node --check desktop/renderer/renderer.js`, `python3 -m py_compile desktop/scripts/rekey-pet-frames.py`, and `git diff --check` passed.
+	- `cd desktop && npm start` passed. Runtime emitted normal `[NAI-PET] sprite keyed ... opaque=... outlinePx=...` idle-frame logs and no residual-plate or pipeline errors. The existing Electron development CSP warning remains unrelated.
+- Remaining:
+	- Manual whole-machine acceptance is required on the affected desktop/Discord backgrounds, including card and throw interactions.

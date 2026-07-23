@@ -11,6 +11,8 @@ const DRAG_THRESHOLD_PX = 4;
 const PET_SIZE = 56;
 const LAYOUT_MARGIN = 8;
 const HIT_ALPHA_THRESHOLD = 16;
+const SPRITE_WHITE_THRESHOLD = 235;
+const SPRITE_BACKGROUND_DELTA = 20;
 
 const RANK = { thinking: 0, responding: 0, done: 1, idle: 2 };
 
@@ -90,7 +92,7 @@ function sampledBackground(data, width, height) {
 	});
 }
 
-function keySpriteBackground(canvas, context) {
+function keySpriteBackground(canvas, context, whiteThreshold = SPRITE_WHITE_THRESHOLD, backgroundDelta = SPRITE_BACKGROUND_DELTA) {
 	const { width, height } = canvas;
 	const imageData = context.getImageData(0, 0, width, height);
 	const { data } = imageData;
@@ -105,12 +107,12 @@ function keySpriteBackground(canvas, context) {
 		const blue = data[offset + 2];
 		const alpha = data[offset + 3];
 		if (alpha === 0) return true;
-		const nearWhite = red >= 240 && green >= 240 && blue >= 240;
+		const nearWhite = red >= whiteThreshold && green >= whiteThreshold && blue >= whiteThreshold;
 		const nearCorner = Math.max(
 			Math.abs(red - background[0]),
 			Math.abs(green - background[1]),
 			Math.abs(blue - background[2]),
-		) <= 18;
+		) <= backgroundDelta;
 		return nearWhite || nearCorner;
 	};
 
@@ -148,6 +150,13 @@ function keySpriteBackground(canvas, context) {
 		data[offset + 3] = 0;
 	}
 	context.putImageData(imageData, 0, 0);
+}
+
+function hasOpaqueSpriteCorner(canvas, context) {
+	const { width, height } = canvas;
+	const { data } = context.getImageData(0, 0, width, height);
+	const corners = [0, width - 1, (height - 1) * width, width * height - 1];
+	return corners.some((pixel) => data[pixel * 4 + 3] > 0);
 }
 
 function outlineSprite(canvas, context) {
@@ -227,6 +236,10 @@ function loadKeyedSprite(relPath) {
 				if (!context) throw new Error("2d canvas unavailable");
 				context.drawImage(image, 0, 0, canvas.width, canvas.height);
 				keySpriteBackground(canvas, context);
+				if (hasOpaqueSpriteCorner(canvas, context)) {
+					console.warn("[NAI-PET] sprite plate residual", relPath);
+					keySpriteBackground(canvas, context, 220, 32);
+				}
 				const { opaquePixels, outlinePixels } = outlineSprite(canvas, context);
 				console.info("[NAI-PET] sprite keyed", relPath, `opaque=${opaquePixels}`, `outlinePx=${outlinePixels}`);
 				spriteFrameMasks.set(relPath, captureSpriteMask(canvas, context));

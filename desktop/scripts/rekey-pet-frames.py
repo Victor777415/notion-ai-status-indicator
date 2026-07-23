@@ -14,8 +14,8 @@ from pathlib import Path
 from PIL import Image
 
 
-WHITE_THRESHOLD = 245
-BACKGROUND_DELTA = 12
+WHITE_THRESHOLD = 235
+BACKGROUND_DELTA = 20
 
 
 def median(values: list[int]) -> int:
