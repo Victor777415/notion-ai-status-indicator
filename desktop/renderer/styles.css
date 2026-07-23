@@ -81,6 +81,12 @@ html, body {
 	flex: 0 0 auto;
 }
 
+.cards.is-layout-pending,
+.collapse.is-layout-pending,
+.badge.is-layout-pending {
+	visibility: hidden;
+}
+
 .card {
 	display: grid;
 	grid-template-columns: 18px 1fr;

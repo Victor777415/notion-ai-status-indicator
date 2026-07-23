@@ -58,6 +58,7 @@ let lastPointer = null;
 let layoutState = { below: false, horizontal: "end" };
 let layoutFrame = 0;
 let layoutRequest = 0;
+let cardsRevealFrame = 0;
 
 function loadSpriteMap() {
 	try {
@@ -596,15 +597,39 @@ function applyLayout(next) {
 	appEl.classList.toggle("layout-align-end", next.horizontal === "end");
 }
 
+function setCardsLayoutPending(pending) {
+	cardsEl.classList.toggle("is-layout-pending", pending);
+	collapseEl.classList.toggle("is-layout-pending", pending);
+	badgeEl.classList.toggle("is-layout-pending", pending);
+}
+
+function revealCardsAfterResize(request) {
+	if (cardsRevealFrame) cancelAnimationFrame(cardsRevealFrame);
+	cardsRevealFrame = requestAnimationFrame(() => {
+		cardsRevealFrame = 0;
+		if (request !== layoutRequest || collapsed || !visibleCards(snapshot).length) return;
+		setCardsLayoutPending(false);
+	});
+}
+
+function resizePetForLayout(payload, request, revealCards) {
+	return Promise.resolve(window.naiBridge.resize(payload))
+		.then(() => {
+			if (revealCards) revealCardsAfterResize(request);
+		})
+		.catch((error) => console.warn("[NAI-PET] resize failed", error && (error.stack || error.message || String(error))));
+}
+
 function scheduleLayoutResize() {
 	if (layoutFrame) return;
 	layoutFrame = requestAnimationFrame(() => {
 		layoutFrame = 0;
 		const list = visibleCards(snapshot);
+		const revealCards = !collapsed && list.length > 0;
 		const size = computeSize(collapsed ? 0 : list.length, !collapsed && list.length > 0, collapsed && list.length > 0);
 		const request = ++layoutRequest;
 		if (!window.naiBridge || typeof window.naiBridge.getLayoutContext !== "function") {
-			window.naiBridge.resize({ ...size, cards: list.length, layout: layoutPayload() });
+			resizePetForLayout({ ...size, cards: list.length, layout: layoutPayload() }, request, revealCards);
 			return;
 		}
 		window.naiBridge.getLayoutContext()
@@ -612,9 +637,9 @@ function scheduleLayoutResize() {
 				if (request !== layoutRequest) return;
 				const pet = context ? petBoundsForContext(context) : null;
 				applyLayout(nextLayout(context, size));
-				window.naiBridge.resize({ ...size, cards: list.length, layout: layoutPayload(), pet });
+				return resizePetForLayout({ ...size, cards: list.length, layout: layoutPayload(), pet }, request, revealCards);
 			})
-			.catch(() => window.naiBridge.resize({ ...size, cards: list.length, layout: layoutPayload() }));
+			.catch(() => resizePetForLayout({ ...size, cards: list.length, layout: layoutPayload() }, request, revealCards));
 	});
 }
 
@@ -627,6 +652,7 @@ function render() {
 	const hasCards = list.length > 0;
 
 	if (!hasCards) collapsed = false;
+	setCardsLayoutPending(hasCards && !collapsed);
 
 	cardsEl.hidden = collapsed || !hasCards;
 	collapseEl.hidden = collapsed || !hasCards;
@@ -634,11 +660,13 @@ function render() {
 	cardsEl.textContent = "";
 
 	if (!hasCards) {
+		setCardsLayoutPending(false);
 		updateWindowSize();
 		return;
 	}
 
 	if (collapsed) {
+		setCardsLayoutPending(false);
 		badgeEl.textContent = String(list.length);
 		updateWindowSize();
 		return;

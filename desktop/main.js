@@ -552,8 +552,8 @@ ipcMain.on("plane:open-notion", (_ev, payload) => {
 	ipcMain.emit("pet:open-notion", _ev, { tabId });
 });
 
-ipcMain.on("pet:resize", (_ev, payload) => {
-	if (!mainWindow || !payload) return;
+ipcMain.handle("pet:resize", (_ev, payload) => {
+	if (!mainWindow || !payload) return null;
 	const w = Math.max(56, Math.round(Number(payload.width) || 56));
 	const h = Math.max(56, Math.round(Number(payload.height) || 56));
 
@@ -572,6 +572,7 @@ ipcMain.on("pet:resize", (_ev, payload) => {
 	mainWindow.setBounds({ x, y, width: w, height: h }, false);
 	lastBounds = { x, y, width: w, height: h };
 	savePositionFromWindow();
+	return lastBounds;
 });
 
 ipcMain.on("pet:drag-start", (_ev, payload) => {

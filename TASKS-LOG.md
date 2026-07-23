@@ -504,3 +504,20 @@
 	- `cd desktop && npm start` passed. Runtime emitted normal `[NAI-PET] sprite keyed ... opaque=... outlinePx=...` idle-frame logs and no residual-plate or pipeline errors. The existing Electron development CSP warning remains unrelated.
 - Remaining:
 	- Manual whole-machine acceptance is required on the affected desktop/Discord backgrounds, including card and throw interactions.
+
+## T-018
+- Date: 2026-07-23 (Asia/Shanghai)
+- Commit:
+	- this commit — stop black line flash above pet
+- Root cause:
+	- The card DOM was populated in the renderer before the asynchronous main-process `setBounds` resize completed. During a high-frequency snapshot update, the still-56px transparent window could clip the dark title glyphs into a thin line above the pet.
+- Changes:
+	- desktop/main.js and desktop/preload.js: Changed the internal `pet:resize` route from fire-and-forget send/on to invoke/handle. The main handler returns after it has applied the new bounds.
+	- desktop/renderer/renderer.js: With visible cards, marks cards and their controls layout-pending before rebuilding their DOM. It awaits the resize IPC and reveals them on the next animation frame. A monotonically increasing layout request discards delayed reveals from stale snapshots. No-card paths remove the pending class while retaining real `hidden` semantics for cards, collapse, and badge.
+	- desktop/renderer/styles.css: Layout-pending cards/collapse/badge use `visibility: hidden`, preserving measured layout without exposing clipped title or control pixels.
+- Self test:
+	- `node --check desktop/main.js`, `node --check desktop/preload.js`, and `node --check desktop/renderer/renderer.js` passed; `git diff --check` passed.
+	- Started Electron and injected `thinking -> responding -> thinking -> done` snapshots at 150ms intervals through the local WS server. Every visible-card update logged `[NAI-PET] resize w=280 h=160 cards=1` before reveal; no `resize failed`, snapshot-render, renderer, or IPC error appeared. The done transition still logged `throw queued t018-sim` and `spawn plane ... t018-sim`.
+	- Existing Electron development CSP warning is unrelated.
+- Remaining:
+	- Manual 30-second whole-machine acceptance is required with a real active conversation and frequent reply updates, verifying no black title-line/fragment flashes above the pet.
