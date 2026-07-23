@@ -157,6 +157,7 @@ function addPlane(payload) {
 		e.stopPropagation();
 		window.naiBridge.planeOpenNotion({
 			id: rec.id,
+			conversationId: rec.conversationId || "",
 			tabId: rec.conversationId ? `conversation:${rec.conversationId}` : (rec.tabId || "latest"),
 		});
 		removePlane(rec.id);

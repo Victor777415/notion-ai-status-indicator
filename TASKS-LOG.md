@@ -425,3 +425,19 @@
 	- `cd desktop && npm start` passed. Renderer emitted normal keyed idle/wait frame logs and no preload, IPC, layout, or renderer errors; the test process was stopped afterward.
 - Remaining:
 	- Manual whole-machine acceptance is still appropriate: drag the pet to all four corners with both expanded and collapsed cards, confirming titles stay visible and the pet remains clickable.
+
+## T-015
+- Date: 2026-07-23 (Asia/Shanghai)
+- Commit:
+	- this commit — sync plane and card dismissal
+- Changes:
+	- desktop/renderer/planes.js: Plane clicks now pass the stable `conversationId` alongside the same `conversation:<id>` or tab-id focus target used by card clicks.
+	- desktop/main.js: Plane open logs `[NAI-PET] plane open`, removes the clicked plane locally before focus dispatch, and forwards the conversation identity to the normal focus route. On every extension snapshot, reconciles all local `activePlanes` against conversation IDs (or tab IDs for fallback records); all planes for a conversation absent from the snapshot are removed. This covers card clicks, notifications, manual read-on-view, and multiple planes without per-entry-point handling.
+	- src/background/service-worker.js: Added `[NAI-BG] mark read` logging to the existing T-007 done-conversation deletion path. Focus arguments already route `conversation:<id>` through `focusConversation(..., { dismissDone: true })`, so no behavior change was required there.
+- Self test:
+	- Snapshot reconciliation simulation passed: when conversation `one` disappeared, both of its planes were removed while conversation `two` remained; interactive-plane state was cleaned too.
+	- Static assertions passed: plane clicks include stable conversation identity and the same focus target as cards; main runs reconciliation per snapshot; service worker logs mark-read events.
+	- `node --check` passed for `desktop/main.js`, `desktop/renderer/planes.js`, and `src/background/service-worker.js`; `git diff --check` passed.
+	- `cd desktop && npm start` passed with normal keyed sprite logs and no new desktop errors; the test process was stopped afterward.
+- Remaining:
+	- Manual integrated acceptance remains: complete a conversation, click a landed plane, then separately click a card and test notification/manual read paths with multiple conversations.

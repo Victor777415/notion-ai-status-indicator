@@ -846,6 +846,7 @@ function focusConversation(conversationId, options = {}) {
 
 function markConversationRead(conversationId, options = {}) {
 	if (!conversationTabs.has(conversationId) || tabStates.get(conversationId) !== STATES.DONE) return false;
+	console.log("[NAI-BG] mark read", "conversation", conversationId, "tab", conversationLastTabIds.get(conversationId));
 	tabUrls.delete(conversationId);
 	tabTitles.delete(conversationId);
 	tabWindows.delete(conversationId);

@@ -276,6 +276,7 @@ function startWsServer() {
 			if (msg && msg.type === "snapshot") {
 				lastSnapshot = Array.isArray(msg.conversations) ? msg.conversations : [];
 				lastNotionTabs = Number.isFinite(msg.notionTabs) ? msg.notionTabs : lastNotionTabs;
+				reconcilePlanes(lastSnapshot);
 				if (mainWindow) mainWindow.webContents.send("nai:snapshot", lastSnapshot);
 				schedulePetVisibility();
 			} else if (msg && msg.type === "pong") {
@@ -472,6 +473,31 @@ function spawnPlaneFromPet(payload) {
 	return planeId;
 }
 
+function removeActivePlane(id) {
+	activePlanes.delete(id);
+	interactivePlanes.delete(id);
+	if (planeWindow) planeWindow.webContents.send("nai:plane-remove", { id });
+}
+
+function reconcilePlanes(conversations) {
+	const conversationIds = new Set();
+	const tabIds = new Set();
+	for (const conversation of conversations || []) {
+		if (conversation && conversation.conversationId) conversationIds.add(String(conversation.conversationId));
+		if (conversation && conversation.tabId != null) tabIds.add(String(conversation.tabId));
+	}
+	for (const [id, plane] of activePlanes) {
+		const present = plane.conversationId
+			? conversationIds.has(String(plane.conversationId))
+			: tabIds.has(String(plane.tabId));
+		if (!present) {
+			console.log("[NAI-PET] plane dismissed by snapshot", id, plane.conversationId || plane.tabId || "");
+			removeActivePlane(id);
+		}
+	}
+	syncPlaneIgnore();
+}
+
 ipcMain.on("pet:open-notion", (_ev, payload) => {
 	const tabId = payload && payload.tabId ? payload.tabId : "latest";
 	if (tabId === "latest") console.log("[NAI-PET] focus latest sent");
@@ -503,23 +529,17 @@ ipcMain.on("plane:interactive", (_ev, payload) => {
 ipcMain.on("plane:remove", (_ev, payload) => {
 	if (!payload || !payload.id) return;
 	const id = String(payload.id);
-	activePlanes.delete(id);
-	interactivePlanes.delete(id);
-	if (planeWindow) {
-		planeWindow.webContents.send("nai:plane-remove", { id });
-		syncPlaneIgnore();
-	}
+	removeActivePlane(id);
+	syncPlaneIgnore();
 });
 
 ipcMain.on("plane:open-notion", (_ev, payload) => {
-	const tabId = payload && payload.tabId ? payload.tabId : "latest";
+	const conversationId = payload && payload.conversationId ? String(payload.conversationId) : "";
+	const tabId = conversationId ? `conversation:${conversationId}` : payload && payload.tabId ? payload.tabId : "latest";
 	const planeId = payload && payload.id ? String(payload.id) : "";
-	if (planeId) activePlanes.delete(planeId);
-	if (planeId) interactivePlanes.delete(planeId);
-	if (planeWindow) {
-		planeWindow.webContents.send("nai:plane-remove", { id: planeId });
-		syncPlaneIgnore();
-	}
+	console.log("[NAI-PET] plane open", planeId, conversationId || tabId);
+	if (planeId) removeActivePlane(planeId);
+	syncPlaneIgnore();
 	ipcMain.emit("pet:open-notion", _ev, { tabId });
 });
 
