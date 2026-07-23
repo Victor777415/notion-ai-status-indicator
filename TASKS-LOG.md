@@ -472,3 +472,16 @@
 	- This also confirms a running conversation is retained for the card, and the done transition produces exactly one throw. T-015 reconciliation remains unchanged.
 - Remaining:
 	- User whole-machine acceptance must reload the extension and desktop companion, then confirm the new `snapshot n=...` log is nonzero while a real Notion task runs. A persistent `n=0` will identify the extension-side snapshot source as the remaining failure surface without changing the protocol speculatively.
+
+## T-016b
+- Date: 2026-07-23 (Asia/Shanghai)
+- Commit:
+	- this commit — remove square shadow plate occlusion
+- Changes:
+	- desktop/renderer/styles.css: Removed the complete `.pet-icon` multi-layer `filter: drop-shadow(...)` stack. The pet surface remains transparent and uncropped; contrast comes only from the existing runtime `outlineSprite` pixels. T-016 alpha-mask click-through remains unchanged.
+- Self test:
+	- `node --check desktop/renderer/renderer.js` and `git diff --check` passed.
+	- PIL inspection of `desktop/renderer/assets/pet/frames/idle_00.png` found `25272/36864` alpha-zero pixels (68.55%); all four corner alpha values are `0`. Static checks confirmed transparent `html/body`, `#app`, `.pet`, and `.pet-icon` surfaces, retained `object-fit: contain`, no remaining `.pet-icon` filter, the T-016 alpha threshold, and the runtime outline pipeline.
+	- `cd desktop && npm start` passed. The terminal showed normal `[NAI-PET] sprite keyed ... opaque=... outlinePx=...` logs with no new startup or renderer errors. Electron's existing development CSP warning is unrelated.
+- Remaining:
+	- Manual whole-machine acceptance is required over desktop text: verify that no rectangular or rounded shadow plate remains, while the outlined cat, drag/click behavior, and card controls remain readable and interactive.
