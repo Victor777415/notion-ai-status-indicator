@@ -456,3 +456,19 @@
 	- `cd desktop && npm start` passed. Terminal output included `[NAI-RENDER] [NAI-PET] sprite keyed ... opaque=... outlinePx=...` for idle frames and no new renderer or IPC errors; Electron's existing development CSP warning remains unrelated.
 - Remaining:
 	- Manual whole-machine acceptance is required to verify OS-level pass-through over desktop text, opaque-cat dragging/clicking, and card/collapse/badge clickability on the user's display.
+
+## T-017
+- Date: 2026-07-23 (Asia/Shanghai)
+- Commit:
+	- this commit — restore conversation cards and throw
+- Actual breakpoint:
+	- The reproducible desktop-side WS simulation did not reproduce a render, resize, or throw failure. A `thinking` snapshot entered the desktop process (`n=1`), reached the renderer, resized the pet window from `56x56` to `280x160`, and rendered the waiting state; the following `done` snapshot queued one throw and produced a plane at the configured release frame. The reported live evidence had only the extension connection line and no desktop snapshot/state logs, so the observed no-card state is an empty/missing snapshot at the desktop ingress rather than a renderer card filter or a 56px resize failure. The permanent logs below make that distinction explicit in the next live run.
+- Changes:
+	- desktop/main.js: Logs every received extension snapshot with conversation count and states, and logs each pet resize with target width, height, and visible-card count.
+	- desktop/renderer/renderer.js: Logs each received snapshot and queued throw. Propagates visible-card count to the existing resize IPC. Wrapped only the T-016 pointer/mask hit test in a local `try/catch`, so a pointer failure cannot interrupt snapshot rendering; the snapshot callback now also logs an explicit render failure rather than failing silently.
+- Self test:
+	- `node --check desktop/main.js` and `node --check desktop/renderer/renderer.js` passed; `git diff --check` passed.
+	- Launched `cd desktop && npm start` and connected a local WebSocket client to port 8787. Sent one `thinking` then one `done` conversation snapshot. Terminal evidence: `[NAI-PET] snapshot n=1 states=thinking`, `[NAI-PET] resize w=280 h=160 cards=1`, `[NAI-PET] snapshot n=1 states=done`, `[NAI-PET] throw queued t017-sim`, and `[NAI-PET] spawn plane ... t017-sim`.
+	- This also confirms a running conversation is retained for the card, and the done transition produces exactly one throw. T-015 reconciliation remains unchanged.
+- Remaining:
+	- User whole-machine acceptance must reload the extension and desktop companion, then confirm the new `snapshot n=...` log is nonzero while a real Notion task runs. A persistent `n=0` will identify the extension-side snapshot source as the remaining failure surface without changing the protocol speculatively.

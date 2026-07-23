@@ -284,6 +284,7 @@ function startWsServer() {
 			if (msg && msg.type === "snapshot") {
 				lastSnapshot = Array.isArray(msg.conversations) ? msg.conversations : [];
 				lastNotionTabs = Number.isFinite(msg.notionTabs) ? msg.notionTabs : lastNotionTabs;
+				console.log("[NAI-PET] snapshot", `n=${lastSnapshot.length}`, `states=${lastSnapshot.map((item) => item && item.state || "unknown").join(",")}`);
 				reconcilePlanes(lastSnapshot);
 				if (mainWindow) mainWindow.webContents.send("nai:snapshot", lastSnapshot);
 				schedulePetVisibility();
@@ -567,6 +568,7 @@ ipcMain.on("pet:resize", (_ev, payload) => {
 	const x = clamped.x;
 	const y = clamped.y;
 
+	console.log("[NAI-PET] resize", `w=${w}`, `h=${h}`, `cards=${Math.max(0, Number(payload.cards) || 0)}`);
 	mainWindow.setBounds({ x, y, width: w, height: h }, false);
 	lastBounds = { x, y, width: w, height: h };
 	savePositionFromWindow();

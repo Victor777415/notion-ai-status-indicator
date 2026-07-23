@@ -280,17 +280,21 @@ function setPetMouseIgnore(ignore) {
 }
 
 function updatePointerInteractivity(point) {
-	if (!point) return;
-	lastPointer = { clientX: point.clientX, clientY: point.clientY };
-	const target = document.elementFromPoint(point.clientX, point.clientY);
-	const control = target && target.closest && target.closest(".card, #collapse, #badge");
-	const inPet = target && target.closest && target.closest("#pet");
-	const interactive = Boolean(control) || (Boolean(inPet) && isOpaqueSpritePoint(currentSpriteMask, point, petSpriteEl.getBoundingClientRect()));
-	if (drag) {
-		setPetMouseIgnore(false);
-		return;
+	try {
+		if (!point) return;
+		lastPointer = { clientX: point.clientX, clientY: point.clientY };
+		const target = document.elementFromPoint(point.clientX, point.clientY);
+		const control = target && target.closest && target.closest(".card, #collapse, #badge");
+		const inPet = target && target.closest && target.closest("#pet");
+		const interactive = Boolean(control) || (Boolean(inPet) && isOpaqueSpritePoint(currentSpriteMask, point, petSpriteEl.getBoundingClientRect()));
+		if (drag) {
+			setPetMouseIgnore(false);
+			return;
+		}
+		setPetMouseIgnore(!interactive);
+	} catch (error) {
+		console.warn("[NAI-PET] pointer hit test failed", error && (error.stack || error.message || String(error)));
 	}
-	setPetMouseIgnore(!interactive);
 }
 
 function clearSpriteTimers() {
@@ -424,6 +428,7 @@ function queueThrow(throwMeta) {
 	if (throwQueue.length >= 3) return;
 	queuedThrowKeys.add(throwMeta.key);
 	throwQueue.push(throwMeta);
+	console.info("[NAI-PET] throw queued", throwMeta.key);
 	pumpThrowQueue();
 }
 
@@ -586,7 +591,7 @@ function scheduleLayoutResize() {
 		const size = computeSize(collapsed ? 0 : list.length, !collapsed && list.length > 0, collapsed && list.length > 0);
 		const request = ++layoutRequest;
 		if (!window.naiBridge || typeof window.naiBridge.getLayoutContext !== "function") {
-			window.naiBridge.resize({ ...size, layout: layoutPayload() });
+			window.naiBridge.resize({ ...size, cards: list.length, layout: layoutPayload() });
 			return;
 		}
 		window.naiBridge.getLayoutContext()
@@ -594,9 +599,9 @@ function scheduleLayoutResize() {
 				if (request !== layoutRequest) return;
 				const pet = context ? petBoundsForContext(context) : null;
 				applyLayout(nextLayout(context, size));
-				window.naiBridge.resize({ ...size, layout: layoutPayload(), pet });
+				window.naiBridge.resize({ ...size, cards: list.length, layout: layoutPayload(), pet });
 			})
-			.catch(() => window.naiBridge.resize({ ...size, layout: layoutPayload() }));
+			.catch(() => window.naiBridge.resize({ ...size, cards: list.length, layout: layoutPayload() }));
 	});
 }
 
@@ -743,9 +748,14 @@ badgeEl.addEventListener("click", () => {
 
 window.naiBridge.onSnapshot((data) => {
 	snapshot = Array.isArray(data) ? data : [];
-	render();
-	syncSnapshotTransitions(snapshot);
-	updateWindowSize();
+	console.info("[NAI-PET] snapshot", `n=${snapshot.length}`, `states=${snapshot.map((item) => item && item.state || "unknown").join(",")}`);
+	try {
+		render();
+		syncSnapshotTransitions(snapshot);
+		updateWindowSize();
+	} catch (error) {
+		console.error("[NAI-PET] snapshot render failed", error && (error.stack || error.message || String(error)));
+	}
 });
 
 window.naiBridge.onVisibility((data) => {
